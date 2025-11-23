@@ -31,7 +31,6 @@ Create a `twd.config.json` file in your project root to customize settings:
 ```json
 {
   "url": "http://localhost:5173",
-  "selector": "[data-testid=\"twd-sidebar\"]",
   "timeout": 10000,
   "coverage": true,
   "coverageDir": "./coverage",
@@ -46,7 +45,6 @@ Create a `twd.config.json` file in your project root to customize settings:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `url` | string | `"http://localhost:5173"` | The URL of your development server |
-| `selector` | string | `"[data-testid=\"twd-sidebar\"]"` | CSS selector to wait for before running tests |
 | `timeout` | number | `10000` | Timeout in milliseconds for page load |
 | `coverage` | boolean | `true` | Enable/disable code coverage collection |
 | `coverageDir` | string | `"./coverage"` | Directory to store coverage reports |
@@ -58,7 +56,7 @@ Create a `twd.config.json` file in your project root to customize settings:
 
 1. Launches a Puppeteer browser instance
 2. Navigates to your specified URL
-3. Waits for your app to be ready (using the selector)
+3. Waits for your app to be ready
 4. Executes all TWD tests via `window.__testRunner`
 5. Collects and reports test results
 6. Optionally collects code coverage data

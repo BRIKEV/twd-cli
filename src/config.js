@@ -3,7 +3,6 @@ import path from 'path';
 
 const DEFAULT_CONFIG = {
   url: 'http://localhost:5173',
-  selector: '[data-testid="twd-sidebar"]',
   timeout: 10000,
   coverage: true,
   coverageDir: './coverage',
