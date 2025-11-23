@@ -1,0 +1,29 @@
+{
+  "name": "twd-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for running TWD tests with Puppeteer",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "twd-cli": "./bin/twd-cli.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "twd",
+    "testing",
+    "cli",
+    "puppeteer",
+    "browser-testing"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "puppeteer": "^24.31.0",
+    "twd-js": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
