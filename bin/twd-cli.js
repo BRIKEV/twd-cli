@@ -6,9 +6,9 @@ const command = process.argv[2];
 
 if (command === 'run') {
   try {
-    await runTests();
+    const hasFailures = await runTests();
+    process.exit(hasFailures ? 1 : 0);
   } catch (error) {
-    console.error('Error running tests:', error);
     process.exit(1);
   }
 } else {

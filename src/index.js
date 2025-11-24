@@ -83,11 +83,11 @@ export async function runTests() {
     await browser.close();
     console.log('Browser closed.');
 
-    process.exit(hasFailures ? 1 : 0);
+    return hasFailures;
 
   } catch (error) {
     console.error('Error running tests:', error);
     await browser.close();
-    process.exit(1);
+    throw error;
   }
 }
