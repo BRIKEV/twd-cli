@@ -25,7 +25,7 @@ export async function runTests() {
     await page.goto(config.url);
 
     // Wait for the selector to be available
-    await page.waitForSelector('[data-testid="twd-sidebar"]', { timeout: config.timeout });
+    await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
     console.log('Page loaded. Starting tests...');
 
     // Execute all tests
