@@ -1,3 +1,7 @@
+## <small>1.0.3 (2025-11-24)</small>
+
+* fix: error selector ([1e081a6](https://github.com/BRIKEV/twd-cli/commit/1e081a6))
+
 ## <small>1.0.2 (2025-11-24)</small>
 
 * feat: add basic cli feature ([23bde8c](https://github.com/BRIKEV/twd-cli/commit/23bde8c))
