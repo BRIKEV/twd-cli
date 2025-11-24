@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
-import { reportResults, executeTests } from 'twd-js/runner-ci';
+import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from './config.js';
 
 export async function runTests() {
@@ -25,12 +25,27 @@ export async function runTests() {
     await page.goto(config.url);
 
     // Wait for the selector to be available
-    await page.waitForSelector("[data-testid=\"twd-sidebar\"]", { timeout: config.timeout });
+    await page.waitForSelector(config.selector, { timeout: config.timeout });
     console.log('Page loaded. Starting tests...');
 
     // Execute all tests
     const { handlers, testStatus } = await page.evaluate(async () => {
-      return await executeTests();
+      const TestRunner = window.__testRunner;
+      const testStatus = [];
+      const runner = new TestRunner({
+        onStart: () => {},
+        onPass: (test) => {
+          testStatus.push({ id: test.id, status: "pass" });
+        },
+        onFail: (test, err) => {
+          testStatus.push({ id: test.id, status: "fail", error: err.message });
+        },
+        onSkip: (test) => {
+          testStatus.push({ id: test.id, status: "skip" });
+        },
+      });
+      const handlers = await runner.runAll();
+      return { handlers: Array.from(handlers.values()), testStatus };
     });
 
     console.log(`Tests to report: ${testStatus.length}`);
