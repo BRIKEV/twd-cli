@@ -64,19 +64,30 @@ Create a `twd.config.json` file in your project root to customize settings:
 
 ## CI/CD Integration
 
-The CLI exits with code 1 if any tests fail, making it perfect for CI/CD pipelines:
+The CLI exits with code 1 if any tests fail, making it perfect for CI/CD pipelines.  
+Puppeteer 24+ no longer auto-downloads Chrome, so make sure you install the browser on each runner (or restore it from a cache) before launching the tests.
 
 ```yaml
 # Example GitHub Actions workflow
-- name: Run TWD Tests
+- name: Install dependencies
+  run: npm ci
+
+- name: Cache Puppeteer browsers
+  uses: actions/cache@v4
+  with:
+    path: ~/.cache/puppeteer
+    key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-puppeteer-
+
+- name: Install Chrome for Puppeteer
+  run: npx puppeteer browsers install chrome
+
+- name: Run TWD tests
   run: npx twd-cli run
 ```
 
 ## Requirements
 
-- Node.js >= 18.0.0
+- Node.js >= 20.19.x
 - A running development server with TWD tests
-
-## License
-
-ISC
