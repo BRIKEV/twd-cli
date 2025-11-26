@@ -1,3 +1,7 @@
+## <small>1.0.4 (2025-11-26)</small>
+
+* fix: better log errors ([25319ca](https://github.com/BRIKEV/twd-cli/commit/25319ca))
+
 ## <small>1.0.3 (2025-11-24)</small>
 
 * fix: error selector ([1e081a6](https://github.com/BRIKEV/twd-cli/commit/1e081a6))
