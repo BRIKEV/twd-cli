@@ -4,22 +4,21 @@ import puppeteer from 'puppeteer';
 import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from './config.js';
 
-export async function runTests() {
-  const config = loadConfig();
-  const workingDir = process.cwd();
-
-  console.log('Starting TWD test runner...');
-  console.log('Configuration:', JSON.stringify(config, null, 2));
-
-  const browser = await puppeteer.launch({
-    headless: config.headless,
-    args: config.puppeteerArgs,
-  });
-
-  const page = await browser.newPage();
-  console.time('Total Test Time');
-
+export async function runTests() {  
   try {
+    const config = loadConfig();
+    const workingDir = process.cwd();
+  
+    console.log('Starting TWD test runner...');
+    console.log('Configuration:', JSON.stringify(config, null, 2));
+  
+    const browser = await puppeteer.launch({
+      headless: config.headless,
+      args: config.puppeteerArgs,
+    });
+  
+    const page = await browser.newPage();
+    console.time('Total Test Time');
     // Navigate to your development server
     console.log(`Navigating to ${config.url} ...`);
     await page.goto(config.url);
