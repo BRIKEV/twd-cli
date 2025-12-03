@@ -23,15 +23,15 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "puppeteer": "^24.31.0",
-    "twd-js": "^1.2.0"
+    "puppeteer": "^24.32.0",
+    "twd-js": "^1.2.3"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.13",
+    "@vitest/coverage-v8": "^4.0.15",
     "conventional-changelog": "^7.1.1",
-    "vitest": "^4.0.13"
+    "vitest": "^4.0.15"
   }
 }
