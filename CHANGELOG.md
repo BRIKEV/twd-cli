@@ -1,3 +1,7 @@
+## <small>1.0.5 (2025-12-03)</small>
+
+* chore: update dependencies ([4cf3e77](https://github.com/BRIKEV/twd-cli/commit/4cf3e77))
+
 ## <small>1.0.4 (2025-11-26)</small>
 
 * fix: better log errors ([25319ca](https://github.com/BRIKEV/twd-cli/commit/25319ca))
