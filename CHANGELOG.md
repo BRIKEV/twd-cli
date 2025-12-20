@@ -1,3 +1,7 @@
+## <small>1.0.8 (2025-12-20)</small>
+
+* chore: update dependencies ([9879cbb](https://github.com/BRIKEV/twd-cli/commit/9879cbb))
+
 ## <small>1.0.7 (2025-12-14)</small>
 
 * feat: update twd version ([c3c8f65](https://github.com/BRIKEV/twd-cli/commit/c3c8f65))
