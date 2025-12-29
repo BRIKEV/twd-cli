@@ -1,6 +1,6 @@
 # twd-cli
 
-CLI tool for running TWD (Test with Documentation) tests using Puppeteer in CI/CD environments.
+CLI tool for running [TWD (Test while developing)](https://brikev.github.io/twd/) tests using Puppeteer in CI/CD environments.
 
 ## Installation
 
