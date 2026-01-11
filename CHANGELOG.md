@@ -1,3 +1,11 @@
+## <small>1.0.10 (2026-01-11)</small>
+
+* chore: update dependencies ([fdb6cc2](https://github.com/BRIKEV/twd-cli/commit/fdb6cc2))
+
+## <small>1.0.9 (2025-12-29)</small>
+
+* chore: update version to v1.0.9 ([9390790](https://github.com/BRIKEV/twd-cli/commit/9390790))
+
 ## <small>1.0.8 (2025-12-20)</small>
 
 * chore: update dependencies ([9879cbb](https://github.com/BRIKEV/twd-cli/commit/9879cbb))
