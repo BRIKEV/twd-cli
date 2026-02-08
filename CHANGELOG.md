@@ -1,3 +1,7 @@
+## <small>1.0.14 (2026-02-08)</small>
+
+* chore: update dependencies ([ac01cb6](https://github.com/BRIKEV/twd-cli/commit/ac01cb6))
+
 ## <small>1.0.13 (2026-02-04)</small>
 
 * feat: update dependencies ([a40575c](https://github.com/BRIKEV/twd-cli/commit/53ec150))
