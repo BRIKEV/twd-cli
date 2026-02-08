@@ -1,3 +1,7 @@
+## <small>1.0.13 (2026-02-04)</small>
+
+* feat: update dependencies ([a40575c](https://github.com/BRIKEV/twd-cli/commit/53ec150))
+
 ## <small>1.0.12 (2026-01-29)</small>
 
 * feat: update dependencies ([a40575c](https://github.com/BRIKEV/twd-cli/commit/a40575c))
