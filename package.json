@@ -24,7 +24,7 @@
   "license": "ISC",
   "dependencies": {
     "puppeteer": "^24.37.2",
-    "twd-js": "^1.5.0"
+    "twd-js": "^1.5.1"
   },
   "engines": {
     "node": ">=18.0.0"
