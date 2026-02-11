@@ -1,3 +1,7 @@
+## <small>1.0.16 (2026-02-11)</small>
+
+* chore: update dependencies ([6713cf9](https://github.com/BRIKEV/twd-cli/commit/6713cf9))
+
 ## <small>1.0.14 (2026-02-10)</small>
 
 * chore: update dependencies ([c2cde99](https://github.com/BRIKEV/twd-cli/commit/c2cde99))
