@@ -37,7 +37,7 @@ export async function runTests() {
           testStatus.push({ id: test.id, status: "pass" });
         },
         onFail: (test, err) => {
-          testStatus.push({ id: test.id, status: "fail", error: err.message });
+          testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
         },
         onSkip: (test) => {
           testStatus.push({ id: test.id, status: "skip" });
