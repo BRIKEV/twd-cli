@@ -1,3 +1,7 @@
+## <small>1.0.18 (2026-03-06)</small>
+
+* chore: update dependencies
+
 ## <small>1.0.17 (2026-03-02)</small>
 
 * fix: include page URL in test failure error messages ([e355542](https://github.com/BRIKEV/twd-cli/commit/e355542))
