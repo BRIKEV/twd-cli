@@ -36,7 +36,8 @@ Create a `twd.config.json` file in your project root to customize settings:
   "coverageDir": "./coverage",
   "nycOutputDir": "./.nyc_output",
   "headless": true,
-  "puppeteerArgs": ["--no-sandbox", "--disable-setuid-sandbox"]
+  "puppeteerArgs": ["--no-sandbox", "--disable-setuid-sandbox"],
+  "retryCount": 2
 }
 ```
 
@@ -51,6 +52,7 @@ Create a `twd.config.json` file in your project root to customize settings:
 | `nycOutputDir` | string | `"./.nyc_output"` | Directory for NYC output |
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
+| `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
 
 ## How It Works
 
