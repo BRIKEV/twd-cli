@@ -28,13 +28,15 @@ export async function runTests() {
     console.log('Page loaded. Starting tests...');
 
     // Execute all tests
-    const { handlers, testStatus } = await page.evaluate(async () => {
+    const { handlers, testStatus } = await page.evaluate(async (retryCount) => {
       const TestRunner = window.__testRunner;
       const testStatus = [];
       const runner = new TestRunner({
         onStart: () => {},
-        onPass: (test) => {
-          testStatus.push({ id: test.id, status: "pass" });
+        onPass: (test, retryAttempt) => {
+          const entry = { id: test.id, status: "pass" };
+          if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
+          testStatus.push(entry);
         },
         onFail: (test, err) => {
           testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
@@ -42,17 +44,28 @@ export async function runTests() {
         onSkip: (test) => {
           testStatus.push({ id: test.id, status: "skip" });
         },
-      });
+      }, { retryCount });
       const handlers = await runner.runAll();
       return { handlers: Array.from(handlers.values()), testStatus };
-    });
+    }, config.retryCount);
 
     console.log(`Tests to report: ${testStatus.length}`);
 
     // Display results in console
     reportResults(handlers, testStatus);
 
-    
+    // Display retry summary if any tests were retried
+    const retriedTests = testStatus.filter(t => t.retryAttempt >= 2);
+    if (retriedTests.length > 0) {
+      console.log('\n⟳ Retried tests:');
+      for (const t of retriedTests) {
+        const handler = handlers.find(h => h.id === t.id);
+        const name = handler ? handler.name : t.id;
+        console.log(`  ✓ ${name} (passed on attempt ${t.retryAttempt})`);
+      }
+      console.log(`  ${retriedTests.length} test(s) required retries to pass.`);
+    }
+
     // Exit with appropriate code
     const hasFailures = testStatus.some(test => test.status === 'fail');
     console.timeEnd('Total Test Time');
