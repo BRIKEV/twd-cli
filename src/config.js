@@ -9,6 +9,7 @@ const DEFAULT_CONFIG = {
   nycOutputDir: './.nyc_output',
   headless: true,
   puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
+  retryCount: 2,
 };
 
 export function loadConfig() {

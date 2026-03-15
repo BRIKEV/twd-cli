@@ -31,6 +31,7 @@ describe('loadConfig', () => {
       nycOutputDir: './.nyc_output',
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
+      retryCount: 2,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -54,6 +55,7 @@ describe('loadConfig', () => {
       nycOutputDir: './.nyc_output',
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
+      retryCount: 2,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -70,6 +72,7 @@ describe('loadConfig', () => {
       nycOutputDir: './custom-nyc',
       headless: false,
       puppeteerArgs: ['--disable-dev-shm-usage'],
+      retryCount: 3,
     };
 
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -96,6 +99,7 @@ describe('loadConfig', () => {
       nycOutputDir: './.nyc_output',
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
+      retryCount: 2,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),
@@ -103,6 +107,20 @@ describe('loadConfig', () => {
     );
 
     consoleWarnSpy.mockRestore();
+  });
+
+  it('should allow user to configure retryCount', () => {
+    const userConfig = {
+      retryCount: 3,
+    };
+
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(userConfig));
+
+    const config = loadConfig();
+
+    expect(config.retryCount).toBe(3);
+    expect(config.url).toBe('http://localhost:5173');
   });
 
   it('should handle partial user config correctly', () => {
