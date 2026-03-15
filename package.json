@@ -1,6 +1,6 @@
 {
   "name": "twd-cli",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "CLI tool for running TWD tests with Puppeteer",
   "type": "module",
   "main": "src/index.js",

@@ -1,3 +1,8 @@
+## <small>1.0.19 (2026-03-15)</small>
+
+* feat: add configurable test retry mechanism (retryCount defaults to 2)
+* feat: display retry summary after test results
+
 ## <small>1.0.18 (2026-03-06)</small>
 
 * chore: update dependencies
