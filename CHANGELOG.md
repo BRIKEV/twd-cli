@@ -1,3 +1,7 @@
+## <small>1.0.20 (2026-03-16)</small>
+
+* chore: update twd-js to 1.6.2
+
 ## <small>1.0.19 (2026-03-15)</small>
 
 * feat: add configurable test retry mechanism (retryCount defaults to 2)
