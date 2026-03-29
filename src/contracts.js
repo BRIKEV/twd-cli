@@ -40,3 +40,60 @@ export async function loadContracts(contracts, workingDir) {
 
   return loaded;
 }
+
+export function validateMocks(collectedMocks, contracts) {
+  const results = [];
+  const skipped = [];
+
+  for (const [, mock] of collectedMocks) {
+    if (mock.urlRegex) {
+      skipped.push({ alias: mock.alias, url: mock.url, reason: 'urlRegex mock' });
+      continue;
+    }
+
+    let matched = false;
+
+    for (const contract of contracts) {
+      if (!mock.url.startsWith(contract.baseUrl)) {
+        continue;
+      }
+
+      const strippedUrl = contract.baseUrl === '/'
+        ? mock.url
+        : mock.url.slice(contract.baseUrl.length);
+
+      const pathMatch = contract.validator.matchPath(strippedUrl, mock.method);
+      if (!pathMatch) {
+        continue;
+      }
+
+      const validation = contract.validator.validateResponse(
+        pathMatch.path,
+        mock.method,
+        mock.status,
+        mock.response,
+        { strict: contract.strict },
+      );
+
+      results.push({
+        alias: mock.alias,
+        url: mock.url,
+        method: mock.method,
+        status: mock.status,
+        specSource: contract.source,
+        matchedPath: pathMatch.path,
+        mode: contract.mode,
+        validation,
+      });
+
+      matched = true;
+      break;
+    }
+
+    if (!matched) {
+      skipped.push({ alias: mock.alias, url: mock.url, reason: 'no matching contract' });
+    }
+  }
+
+  return { results, skipped };
+}
