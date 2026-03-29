@@ -3,22 +3,43 @@ import path from 'path';
 import puppeteer from 'puppeteer';
 import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from './config.js';
+import { loadContracts, validateMocks } from './contracts.js';
+import { printContractReport } from './contractReport.js';
 
-export async function runTests() {  
+export async function runTests() {
+  let browser;
   try {
     const config = loadConfig();
     const workingDir = process.cwd();
-  
+
     console.log('Starting TWD test runner...');
     console.log('Configuration:', JSON.stringify(config, null, 2));
-  
-    const browser = await puppeteer.launch({
+
+    // Load contract validators if configured
+    let contractValidators = [];
+    if (config.contracts && config.contracts.length > 0) {
+      contractValidators = await loadContracts(config.contracts, workingDir);
+    }
+
+    browser = await puppeteer.launch({
       headless: config.headless,
       args: config.puppeteerArgs,
     });
-  
+
     const page = await browser.newPage();
     console.time('Total Test Time');
+
+    // Register mock collector for contract validation
+    const collectedMocks = new Map();
+    if (config.contracts && config.contracts.length > 0) {
+      await page.exposeFunction('__twdCollectMock', (mock) => {
+        const key = `${mock.method}:${mock.url}:${mock.status}`;
+        if (!collectedMocks.has(key)) {
+          collectedMocks.set(key, mock);
+        }
+      });
+    }
+
     // Navigate to your development server
     console.log(`Navigating to ${config.url} ...`);
     await page.goto(config.url);
@@ -67,8 +88,21 @@ export async function runTests() {
     }
 
     // Exit with appropriate code
-    const hasFailures = testStatus.some(test => test.status === 'fail');
+    let hasFailures = testStatus.some(test => test.status === 'fail');
     console.timeEnd('Total Test Time');
+
+    // Contract validation
+    if (config.contracts && config.contracts.length > 0) {
+      if (collectedMocks.size === 0) {
+        console.log('\nNo mocks collected — ensure twd-js supports contract collection');
+      }
+      const validationOutput = validateMocks(collectedMocks, contractValidators);
+      const hasContractErrors = printContractReport(validationOutput);
+      if (hasContractErrors) {
+        hasFailures = true;
+      }
+    }
+
     // Handle code coverage if enabled
     if (config.coverage && !hasFailures) {
       const coverage = await page.evaluate(() => window.__coverage__);
@@ -91,7 +125,7 @@ export async function runTests() {
         console.log('No code coverage data found.');
       }
     }
-    
+
     await browser.close();
     console.log('Browser closed.');
 
@@ -99,7 +133,7 @@ export async function runTests() {
 
   } catch (error) {
     console.error('Error running tests:', error);
-    await browser.close();
+    if (browser) await browser.close();
     throw error;
   }
 }
