@@ -24,15 +24,15 @@
   "license": "ISC",
   "dependencies": {
     "openapi-mock-validator": "file:../openapi-mock-validator",
-    "puppeteer": "^24.39.1",
-    "twd-js": "^1.6.2"
+    "puppeteer": "^24.40.0",
+    "twd-js": "^1.6.3"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.2",
     "conventional-changelog": "^7.2.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.2"
   }
 }
