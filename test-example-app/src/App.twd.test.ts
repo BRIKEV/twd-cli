@@ -1,41 +1,31 @@
 import { twd, userEvent, screenDom } from "twd-js";
-import { describe, it } from "twd-js/runner";
+import { describe, it, beforeEach } from "twd-js/runner";
 
 describe("App Component", () => {
-  it("should render the main heading", async () => {
+  beforeEach(async () => {
     await twd.visit("/");
+  });
 
-    // Use screenDom for testing library queries
+  it("should render the main heading", async () => {
     const heading = screenDom.getByRole("heading", { level: 1 });
     twd.should(heading, "be.visible");
     twd.should(heading, "have.text", "Vite + React");
   });
 
   it("should handle button clicks and increment counter", async () => {
-    await twd.visit("/");
-
     const user = userEvent.setup();
     const button = screenDom.getByRole("button", { name: /count is/i });
 
-    // Check initial state
     twd.should(button, "have.text", "count is 0");
 
-    // Click the button
     await user.click(button);
-
-    // Verify counter incremented
     twd.should(button, "have.text", "count is 1");
 
-    // Click again
     await user.click(button);
-
-    // Verify counter incremented again
     twd.should(button, "have.text", "count is 2");
   });
 
   it("should display the logos", async () => {
-    await twd.visit("/");
-
     const viteLogo = screenDom.getByAltText("Vite logo");
     const reactLogo = screenDom.getByAltText("React logo");
 
@@ -48,8 +38,6 @@ describe("App Component", () => {
 
 describe("Contract Validation - Users API (OpenAPI 3.0)", () => {
   it("should mock GET /api/users with nested address and oneOf role", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUsers", {
       method: "GET",
       url: "/api/users",
@@ -70,8 +58,6 @@ describe("Contract Validation - Users API (OpenAPI 3.0)", () => {
   });
 
   it("should mock GET /api/users/:id", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUser", {
       method: "GET",
       url: "/api/users/1",
@@ -86,8 +72,6 @@ describe("Contract Validation - Users API (OpenAPI 3.0)", () => {
 
 describe("Contract Validation - Posts API (OpenAPI 3.1)", () => {
   it("should mock GET /api/posts with nested author and oneOf metadata", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getPosts", {
       method: "GET",
       url: "/api/posts",
@@ -108,8 +92,6 @@ describe("Contract Validation - Posts API (OpenAPI 3.1)", () => {
   });
 
   it("should mock GET /api/posts/:id", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getPost", {
       method: "GET",
       url: "/api/posts/1",
@@ -126,8 +108,6 @@ describe("Contract Validation - Posts API (OpenAPI 3.1)", () => {
 
 describe("Contract Validation - Mismatches", () => {
   it("should fail: missing nested address field", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUserNoAddress", {
       method: "GET",
       url: "/api/users/10",
@@ -137,8 +117,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should fail: nested address missing required city", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUserBadAddress", {
       method: "GET",
       url: "/api/users/11",
@@ -151,8 +129,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should fail: oneOf role with invalid variant", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUserBadRole", {
       method: "GET",
       url: "/api/users/12",
@@ -166,8 +142,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should fail: post missing nested author object", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getPostNoAuthor", {
       method: "GET",
       url: "/api/posts/50",
@@ -177,8 +151,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should fail: post oneOf metadata matches neither variant", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getPostBadMeta", {
       method: "GET",
       url: "/api/posts/51",
@@ -192,8 +164,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should warn: undocumented 404 status", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUserNotFound", {
       method: "GET",
       url: "/api/users/999",
@@ -203,8 +173,6 @@ describe("Contract Validation - Mismatches", () => {
   });
 
   it("should skip: endpoint not in any spec", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getUnknown", {
       method: "GET",
       url: "/api/unknown",
@@ -217,11 +185,7 @@ describe("Contract Validation - Mismatches", () => {
 // ── Products API (OpenAPI 3.0) — Valid mocks ────────────────────────
 
 describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
-  // --- string: minLength, maxLength, pattern, formats ---
-
   it("should mock GET /api/products with all valid fields", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductsFull", {
       method: "GET",
       url: "/api/products",
@@ -255,8 +219,6 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
   });
 
   it("should mock GET /api/products with minimal required fields", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductsMinimal", {
       method: "GET",
       url: "/api/products",
@@ -275,8 +237,6 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
   });
 
   it("should mock POST /api/products with valid create payload", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("createProduct", {
       method: "POST",
       url: "/api/products",
@@ -292,11 +252,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- nullable (3.0 style: nullable: true) ---
-
   it("should accept null for nullable description (3.0 nullable)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductNullDesc", {
       method: "GET",
       url: "/api/products/550e8400-e29b-41d4-a716-446655440000",
@@ -314,8 +270,6 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
   });
 
   it("should accept null for nullable compareAtPrice (3.0 nullable number)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductNullPrice", {
       method: "GET",
       url: "/api/products/550e8400-e29b-41d4-a716-446655440001",
@@ -332,11 +286,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- enum ---
-
   it("should accept all valid currency enum values", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductsAllCurrencies", {
       method: "GET",
       url: "/api/products",
@@ -350,11 +300,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- boolean ---
-
   it("should accept boolean inStock values", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductsBool", {
       method: "GET",
       url: "/api/products",
@@ -366,11 +312,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- array: uniqueItems, maxItems ---
-
   it("should accept unique tags within limit", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductTags", {
       method: "GET",
       url: "/api/products",
@@ -389,11 +331,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- additionalProperties (typed) ---
-
   it("should accept metadata with string additionalProperties", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductMeta", {
       method: "GET",
       url: "/api/products",
@@ -412,11 +350,7 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
     });
   });
 
-  // --- Settings: additionalProperties: false ---
-
   it("should mock GET /api/settings with valid properties only", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getSettings", {
       method: "GET",
       url: "/api/settings",
@@ -430,8 +364,6 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
   });
 
   it("should accept null for nullable Settings customCss (3.0 nullable)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getSettingsNullCss", {
       method: "GET",
       url: "/api/settings",
@@ -450,8 +382,6 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
 
 describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)", () => {
   it("should fail: empty name violates minLength", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductEmptyName", {
       method: "GET",
       url: "/api/products",
@@ -463,8 +393,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid SKU pattern", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadSku", {
       method: "GET",
       url: "/api/products",
@@ -476,8 +404,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid uuid format for id", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadUuid", {
       method: "GET",
       url: "/api/products",
@@ -489,8 +415,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid date-time format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadDateTime", {
       method: "GET",
       url: "/api/products",
@@ -502,8 +426,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid date format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadDate", {
       method: "GET",
       url: "/api/products",
@@ -515,8 +437,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid email format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadEmail", {
       method: "GET",
       url: "/api/products",
@@ -528,8 +448,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid uri format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadUri", {
       method: "GET",
       url: "/api/products",
@@ -541,8 +459,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid ipv4 format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadIp", {
       method: "GET",
       url: "/api/products",
@@ -554,8 +470,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid ipv6 format", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadIpV6", {
       method: "GET",
       url: "/api/products",
@@ -567,8 +481,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: price of 0 violates exclusiveMinimum", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductZeroPrice", {
       method: "GET",
       url: "/api/products",
@@ -580,8 +492,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: negative quantity violates minimum", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductNegQty", {
       method: "GET",
       url: "/api/products",
@@ -593,8 +503,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: quantity exceeds maximum", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductOverQty", {
       method: "GET",
       url: "/api/products",
@@ -606,8 +514,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: weight not multipleOf 0.01", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadWeight", {
       method: "GET",
       url: "/api/products",
@@ -619,8 +525,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: rating above maximum (5)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadRating", {
       method: "GET",
       url: "/api/products",
@@ -632,8 +536,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid enum value for currency", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadCurrency", {
       method: "GET",
       url: "/api/products",
@@ -645,8 +547,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid enum value for category", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadCategory", {
       method: "GET",
       url: "/api/products",
@@ -658,8 +558,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: string value for boolean inStock", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadBool", {
       method: "GET",
       url: "/api/products",
@@ -671,8 +569,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: duplicate tags violates uniqueItems", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductDupTags", {
       method: "GET",
       url: "/api/products",
@@ -684,8 +580,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: tags exceeds maxItems (10)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductTooManyTags", {
       method: "GET",
       url: "/api/products",
@@ -700,8 +594,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: non-string value in metadata additionalProperties", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadMeta", {
       method: "GET",
       url: "/api/products",
@@ -713,8 +605,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: extra property on Settings (additionalProperties: false)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getSettingsBadExtra", {
       method: "GET",
       url: "/api/settings",
@@ -724,8 +614,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: invalid language pattern in Settings", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getSettingsBadLang", {
       method: "GET",
       url: "/api/settings",
@@ -735,8 +623,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
   });
 
   it("should fail: wrong type for nullable description (number instead of string|null)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getProductBadNullable", {
       method: "GET",
       url: "/api/products",
@@ -752,8 +638,6 @@ describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)
 
 describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
   it("should mock GET /api/events with all valid fields", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventsFull", {
       method: "GET",
       url: "/api/events",
@@ -777,8 +661,6 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
   });
 
   it("should mock GET /api/events with minimal required fields", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventsMinimal", {
       method: "GET",
       url: "/api/events",
@@ -795,11 +677,7 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
     });
   });
 
-  // --- nullable (3.1 style: type array) ---
-
   it("should accept null for nullable endDate (3.1 type array)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventNullEnd", {
       method: "GET",
       url: "/api/events/1",
@@ -816,8 +694,6 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
   });
 
   it("should accept null for nullable description (3.1 type array)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventNullDesc", {
       method: "GET",
       url: "/api/events/2",
@@ -834,8 +710,6 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
   });
 
   it("should accept null for nullable capacity (3.1 nullable integer)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventNullCap", {
       method: "GET",
       url: "/api/events/3",
@@ -851,11 +725,7 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
     });
   });
 
-  // --- enum ---
-
   it("should accept all valid status enum values", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventsAllStatus", {
       method: "GET",
       url: "/api/events",
@@ -873,8 +743,6 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
 
 describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)", () => {
   it("should fail: empty events array violates minItems (1)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventsEmpty", {
       method: "GET",
       url: "/api/events",
@@ -884,8 +752,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: event name too short (minLength: 3)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventShortName", {
       method: "GET",
       url: "/api/events",
@@ -897,8 +763,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: invalid date-time format for startDate", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventBadDate", {
       method: "GET",
       url: "/api/events",
@@ -910,8 +774,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: float value for integer id", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventFloatId", {
       method: "GET",
       url: "/api/events",
@@ -923,8 +785,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: number value for boolean active", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventBadBool", {
       method: "GET",
       url: "/api/events",
@@ -936,8 +796,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: invalid enum value for status", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventBadStatus", {
       method: "GET",
       url: "/api/events",
@@ -949,8 +807,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: score at exclusiveMaximum boundary (100)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventScoreMax", {
       method: "GET",
       url: "/api/events",
@@ -962,8 +818,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: priority below minimum (1)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventLowPriority", {
       method: "GET",
       url: "/api/events",
@@ -975,8 +829,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: priority above maximum (5)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventHighPriority", {
       method: "GET",
       url: "/api/events",
@@ -988,8 +840,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: duplicate attendees violates uniqueItems", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventDupAttendees", {
       method: "GET",
       url: "/api/events",
@@ -1004,8 +854,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: empty attendees array violates minItems (1)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventNoAttendees", {
       method: "GET",
       url: "/api/events",
@@ -1020,8 +868,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: invalid email format in attendees", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventBadAttendee", {
       method: "GET",
       url: "/api/events",
@@ -1036,8 +882,6 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
   });
 
   it("should fail: wrong type for nullable description (number instead of string|null)", async () => {
-    await twd.visit("/");
-
     twd.mockRequest("getEventBadNullable", {
       method: "GET",
       url: "/api/events/99",
