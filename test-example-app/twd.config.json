@@ -12,6 +12,18 @@
       "baseUrl": "/api",
       "mode": "warn",
       "strict": true
+    },
+    {
+      "source": "./contracts/products-3.0.json",
+      "baseUrl": "/api",
+      "mode": "error",
+      "strict": true
+    },
+    {
+      "source": "./contracts/events-3.1.json",
+      "baseUrl": "/api",
+      "mode": "error",
+      "strict": true
     }
   ]
 }
