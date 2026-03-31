@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:5173",
+  "contracts": [
+    {
+      "source": "./contracts/users-3.0.json",
+      "baseUrl": "/api",
+      "mode": "error",
+      "strict": true
+    },
+    {
+      "source": "./contracts/posts-3.1.json",
+      "baseUrl": "/api",
+      "mode": "warn",
+      "strict": true
+    }
+  ]
+}

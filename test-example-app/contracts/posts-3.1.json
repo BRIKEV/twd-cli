@@ -1,0 +1,96 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Posts API", "version": "1.0.0" },
+  "paths": {
+    "/posts": {
+      "get": {
+        "operationId": "getPosts",
+        "responses": {
+          "200": {
+            "description": "List of posts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Post"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/posts/{postId}": {
+      "get": {
+        "operationId": "getPost",
+        "parameters": [
+          {
+            "name": "postId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A single post",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Author": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" }
+        }
+      },
+      "Post": {
+        "type": "object",
+        "required": ["id", "title", "body", "author"],
+        "properties": {
+          "id": { "type": "integer" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "author": { "$ref": "#/components/schemas/Author" },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["type", "category"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["article"] },
+                  "category": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["type", "tags"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["note"] },
+                  "tags": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
