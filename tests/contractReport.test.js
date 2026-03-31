@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { printContractReport } from '../src/contractReport.js';
 
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
 describe('printContractReport', () => {
   let consoleSpy;
 
@@ -32,7 +34,7 @@ describe('printContractReport', () => {
     const hasErrors = printContractReport(output);
 
     expect(hasErrors).toBe(false);
-    const logs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
     expect(logs).toContain('All mocks match');
     expect(logs).toContain('Mocks validated: 1');
   });
@@ -50,7 +52,7 @@ describe('printContractReport', () => {
           mode: 'warn',
           validation: {
             valid: false,
-            errors: [{ path: '/id', message: 'must be integer', keyword: 'type' }],
+            errors: [{ path: 'response.id', message: 'expected integer, got string', keyword: 'type' }],
             warnings: [],
           },
         },
@@ -60,11 +62,11 @@ describe('printContractReport', () => {
 
     const hasErrors = printContractReport(output);
 
-    const logs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
     expect(logs).toContain('✗');
     expect(logs).toContain('POST /v1/pets (201)');
     expect(logs).toContain('createPet');
-    expect(logs).toContain('/id');
+    expect(logs).toContain('response.id');
     expect(logs).toContain('Errors: 1');
   });
 
@@ -91,7 +93,7 @@ describe('printContractReport', () => {
 
     printContractReport(output);
 
-    const logs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
     expect(logs).toContain('⚠');
     expect(logs).toContain('Warnings: 1');
   });
@@ -106,7 +108,7 @@ describe('printContractReport', () => {
 
     printContractReport(output);
 
-    const logs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
     expect(logs).toContain('ℹ');
     expect(logs).toContain('adyenSetup');
     expect(logs).toContain('Skipped: 1');
@@ -124,7 +126,7 @@ describe('printContractReport', () => {
           mode: 'warn',
           validation: {
             valid: false,
-            errors: [{ path: '/id', message: 'must be integer', keyword: 'type' }],
+            errors: [{ path: 'response.id', message: 'expected integer, got string', keyword: 'type' }],
             warnings: [],
           },
         },
@@ -149,7 +151,7 @@ describe('printContractReport', () => {
           mode: 'error',
           validation: {
             valid: false,
-            errors: [{ path: '/id', message: 'must be integer', keyword: 'type' }],
+            errors: [{ path: 'response.id', message: 'expected integer, got string', keyword: 'type' }],
             warnings: [],
           },
         },
