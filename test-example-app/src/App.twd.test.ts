@@ -446,9 +446,9 @@ describe("Contract Validation - Products API (OpenAPI 3.0)", () => {
   });
 });
 
-// ── Products API (OpenAPI 3.0) — Invalid mocks ─────────────────────
+// ── Products API (OpenAPI 3.0) — Invalid mocks (error mode) ─────────
 
-describe("Contract Validation - Products Mismatches (OpenAPI 3.0)", () => {
+describe("Contract Validation - Products Mismatches (OpenAPI 3.0 — error mode)", () => {
   it("should fail: empty name violates minLength", async () => {
     await twd.visit("/");
 
@@ -869,9 +869,9 @@ describe("Contract Validation - Events API (OpenAPI 3.1)", () => {
   });
 });
 
-// ── Events API (OpenAPI 3.1) — Invalid mocks ───────────────────────
+// ── Events API (OpenAPI 3.1) — Invalid mocks (error mode) ──────────
 
-describe("Contract Validation - Events Mismatches (OpenAPI 3.1)", () => {
+describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)", () => {
   it("should fail: empty events array violates minItems (1)", async () => {
     await twd.visit("/");
 
