@@ -82,7 +82,7 @@ describe('validateMocks', () => {
 
   it('validates a matching mock with valid response', () => {
     const mocks = new Map();
-    mocks.set('GET:/api/v1/pets:200', {
+    mocks.set('getPets', {
       alias: 'getPets',
       url: '/api/v1/pets',
       method: 'GET',
@@ -100,7 +100,7 @@ describe('validateMocks', () => {
 
   it('validates a matching mock with invalid response', () => {
     const mocks = new Map();
-    mocks.set('POST:/api/v1/pets:201', {
+    mocks.set('createPet', {
       alias: 'createPet',
       url: '/api/v1/pets',
       method: 'POST',
@@ -118,7 +118,7 @@ describe('validateMocks', () => {
 
   it('strips baseUrl before matching', () => {
     const mocks = new Map();
-    mocks.set('GET:/api/v1/pets/123:200', {
+    mocks.set('getPet', {
       alias: 'getPet',
       url: '/api/v1/pets/123',
       method: 'GET',
@@ -135,7 +135,7 @@ describe('validateMocks', () => {
 
   it('skips urlRegex mocks', () => {
     const mocks = new Map();
-    mocks.set('PATCH:/regex/:200', {
+    mocks.set('updateOrder', {
       alias: 'updateOrder',
       url: '/\\/api\\/v1\\/orders\\/.*/',
       method: 'PATCH',
@@ -153,7 +153,7 @@ describe('validateMocks', () => {
 
   it('skips mocks that do not match any contract baseUrl', () => {
     const mocks = new Map();
-    mocks.set('POST:/external/v1/sessions:200', {
+    mocks.set('adyenSetup', {
       alias: 'adyenSetup',
       url: '/external/v1/sessions',
       method: 'POST',
@@ -171,7 +171,7 @@ describe('validateMocks', () => {
 
   it('returns warning for undocumented status code', () => {
     const mocks = new Map();
-    mocks.set('GET:/api/v1/pets:500', {
+    mocks.set('serverError', {
       alias: 'serverError',
       url: '/api/v1/pets',
       method: 'GET',

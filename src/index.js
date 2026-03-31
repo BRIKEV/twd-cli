@@ -33,10 +33,7 @@ export async function runTests() {
     const collectedMocks = new Map();
     if (config.contracts && config.contracts.length > 0) {
       await page.exposeFunction('__twdCollectMock', (mock) => {
-        const key = `${mock.method}:${mock.url}:${mock.status}`;
-        if (!collectedMocks.has(key)) {
-          collectedMocks.set(key, mock);
-        }
+        collectedMocks.set(mock.alias, mock);
       });
     }
 
