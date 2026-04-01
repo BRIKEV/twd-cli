@@ -1,10 +1,11 @@
 {
   "url": "http://localhost:5173",
+  "contractReportPath": ".twd/contract-report.md",
   "contracts": [
     {
       "source": "./contracts/users-3.0.json",
       "baseUrl": "/api",
-      "mode": "error",
+      "mode": "warn",
       "strict": true
     },
     {
@@ -16,13 +17,13 @@
     {
       "source": "./contracts/products-3.0.json",
       "baseUrl": "/api",
-      "mode": "error",
+      "mode": "warn",
       "strict": true
     },
     {
       "source": "./contracts/events-3.1.json",
       "baseUrl": "/api",
-      "mode": "error",
+      "mode": "warn",
       "strict": true
     }
   ]

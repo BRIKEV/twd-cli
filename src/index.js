@@ -5,6 +5,7 @@ import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from './config.js';
 import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
+import { generateContractMarkdown } from './contractMarkdown.js';
 
 export async function runTests() {
   let browser;
@@ -97,6 +98,18 @@ export async function runTests() {
       const hasContractErrors = printContractReport(validationOutput);
       if (hasContractErrors) {
         hasFailures = true;
+      }
+
+      // Write markdown report for CI/PR integration
+      if (config.contractReportPath) {
+        const reportPath = path.resolve(workingDir, config.contractReportPath);
+        const reportDir = path.dirname(reportPath);
+        if (!fs.existsSync(reportDir)) {
+          fs.mkdirSync(reportDir, { recursive: true });
+        }
+        const markdown = generateContractMarkdown(validationOutput);
+        fs.writeFileSync(reportPath, markdown);
+        console.log(`Contract report written to ${config.contractReportPath}`);
       }
     }
 
