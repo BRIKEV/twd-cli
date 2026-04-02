@@ -1,0 +1,78 @@
+name: E2E Contract Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:ci
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Install test-example-app dependencies
+        working-directory: test-example-app
+        run: npm ci
+
+      - name: Start dev server
+        working-directory: test-example-app
+        run: npx vite --host &
+
+      - name: Wait for dev server
+        run: npx wait-on http://localhost:5173 --timeout 30000
+
+      - name: Run TWD CLI
+        working-directory: test-example-app
+        run: node ../bin/twd-cli.js run || true
+
+      - name: Verify contract report was generated
+        working-directory: test-example-app
+        run: |
+          if [ ! -f .twd/contract-report.md ]; then
+            echo "ERROR: Contract report not generated"
+            exit 1
+          fi
+          echo "=== Contract Report ==="
+          cat .twd/contract-report.md
+
+      - name: Post contract report to PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd test-example-app
+          echo "" >> .twd/contract-report.md
+          echo "[View full report →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> .twd/contract-report.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file .twd/contract-report.md
