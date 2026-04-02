@@ -46,16 +46,21 @@ jobs:
         working-directory: test-example-app
         run: npm install
 
+      - name: Install mock service worker
+        working-directory: test-example-app
+        run: npx twd-js init public --save
+
       - name: Start dev server
         working-directory: test-example-app
-        run: npx vite --host &
+        run: |
+          nohup npx vite --host > vite.log 2>&1 &
+          npx wait-on http://localhost:5173 --timeout 30000
 
-      - name: Wait for dev server
-        run: npx wait-on http://localhost:5173 --timeout 30000
-
-      - name: Run TWD CLI
-        working-directory: test-example-app
-        run: node ../bin/twd-cli.js run || true
+      - name: Run TWD tests
+        uses: ./.github/actions/run
+        with:
+          working-directory: test-example-app
+          contract-report: 'true'
 
       - name: Verify contract report was generated
         working-directory: test-example-app
@@ -66,13 +71,3 @@ jobs:
           fi
           echo "=== Contract Report ==="
           cat .twd/contract-report.md
-
-      - name: Post contract report to PR
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd test-example-app
-          echo "" >> .twd/contract-report.md
-          echo "[View full report →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> .twd/contract-report.md
-          gh pr comment ${{ github.event.pull_request.number }} --body-file .twd/contract-report.md

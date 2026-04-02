@@ -1,0 +1,57 @@
+name: 'TWD CLI Run'
+description: 'Run TWD browser tests with Puppeteer, including optional contract validation reporting'
+
+inputs:
+  working-directory:
+    description: 'Directory where twd.config.json lives'
+    required: false
+    default: '.'
+  contract-report:
+    description: 'Post contract validation report as a PR comment'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache Puppeteer browsers
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/puppeteer
+        key: ${{ runner.os }}-puppeteer-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
+        restore-keys: |
+          ${{ runner.os }}-puppeteer-
+
+    - name: Install Chrome for Puppeteer
+      shell: bash
+      run: npx puppeteer browsers install chrome
+
+    - name: Run TWD tests
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx twd-cli run
+
+    - name: Post contract report to PR
+      if: inputs.contract-report == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Find the report file from contractReportPath in twd.config.json
+        REPORT_PATH=$(node -e "
+          const fs = require('fs');
+          try {
+            const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
+            if (config.contractReportPath) console.log(config.contractReportPath);
+          } catch {}
+        ")
+
+        if [ -z "$REPORT_PATH" ] || [ ! -f "$REPORT_PATH" ]; then
+          echo "No contract report found — skipping PR comment"
+          exit 0
+        fi
+
+        echo "" >> "$REPORT_PATH"
+        echo "[View full report →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "$REPORT_PATH"
+        gh pr comment ${{ github.event.pull_request.number }} --body-file "$REPORT_PATH"
