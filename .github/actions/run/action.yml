@@ -1,5 +1,8 @@
 name: 'TWD CLI Run'
 description: 'Run TWD browser tests with Puppeteer, including optional contract validation reporting'
+branding:
+  icon: 'check-circle'
+  color: 'green'
 
 inputs:
   working-directory:
@@ -7,7 +10,7 @@ inputs:
     required: false
     default: '.'
   contract-report:
-    description: 'Post contract validation report as a PR comment'
+    description: 'Post contract validation report as a PR comment (requires pull-requests: write permission)'
     required: false
     default: 'false'
 
@@ -15,7 +18,7 @@ runs:
   using: 'composite'
   steps:
     - name: Cache Puppeteer browsers
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.cache/puppeteer
         key: ${{ runner.os }}-puppeteer-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
@@ -55,4 +58,7 @@ runs:
 
         echo "" >> "$REPORT_PATH"
         echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
-        gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH"
+
+        if ! gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH" 2>/dev/null; then
+          echo "::warning::Could not post contract report to PR. Ensure the workflow has 'pull-requests: write' permission."
+        fi
