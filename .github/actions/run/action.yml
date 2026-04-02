@@ -37,8 +37,9 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        # Find the report file from contractReportPath in twd.config.json
         REPORT_PATH=$(node -e "
           const fs = require('fs');
           try {
@@ -53,5 +54,5 @@ runs:
         fi
 
         echo "" >> "$REPORT_PATH"
-        echo "[View full report →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "$REPORT_PATH"
-        gh pr comment ${{ github.event.pull_request.number }} --body-file "$REPORT_PATH"
+        echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
+        gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH"

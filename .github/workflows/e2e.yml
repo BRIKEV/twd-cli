@@ -50,17 +50,26 @@ jobs:
         working-directory: test-example-app
         run: npx twd-js init public --save
 
+      - name: Cache Puppeteer browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
       - name: Start dev server
         working-directory: test-example-app
         run: |
           nohup npx vite --host > vite.log 2>&1 &
           npx wait-on http://localhost:5173 --timeout 30000
 
-      - name: Run TWD tests
-        uses: ./.github/actions/run
-        with:
-          working-directory: test-example-app
-          contract-report: 'true'
+      - name: Run TWD tests (local CLI)
+        working-directory: test-example-app
+        run: node ../bin/twd-cli.js run
 
       - name: Verify contract report was generated
         working-directory: test-example-app
@@ -71,3 +80,16 @@ jobs:
           fi
           echo "=== Contract Report ==="
           cat .twd/contract-report.md
+
+      - name: Post contract report to PR
+        if: github.event_name == 'pull_request'
+        working-directory: test-example-app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          REPORT_PATH=".twd/contract-report.md"
+          echo "" >> "$REPORT_PATH"
+          echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
+          gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH"
