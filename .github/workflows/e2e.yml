@@ -44,7 +44,7 @@ jobs:
 
       - name: Install test-example-app dependencies
         working-directory: test-example-app
-        run: npm ci
+        run: npm install
 
       - name: Start dev server
         working-directory: test-example-app
