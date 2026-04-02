@@ -1,0 +1,97 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Users API", "version": "1.0.0" },
+  "paths": {
+    "/users": {
+      "get": {
+        "operationId": "getUsers",
+        "responses": {
+          "200": {
+            "description": "List of users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "get": {
+        "operationId": "getUser",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A single user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "object",
+        "required": ["street", "city", "country"],
+        "properties": {
+          "street": { "type": "string" },
+          "city": { "type": "string" },
+          "zipCode": { "type": "string" },
+          "country": { "type": "string" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "email", "address"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "role": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["type", "permissions"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["admin"] },
+                  "permissions": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["viewer"] }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

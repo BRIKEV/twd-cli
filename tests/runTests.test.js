@@ -9,17 +9,27 @@ vi.mock('twd-js/runner-ci', () => ({
 vi.mock('../src/config.js', () => ({
   loadConfig: vi.fn(),
 }));
+vi.mock('../src/contracts.js', () => ({
+  loadContracts: vi.fn(),
+  validateMocks: vi.fn(),
+}));
+vi.mock('../src/contractReport.js', () => ({
+  printContractReport: vi.fn(),
+}));
 
 import fs from 'fs';
 import puppeteer from 'puppeteer';
 import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from '../src/config.js';
+import { loadContracts, validateMocks } from '../src/contracts.js';
+import { printContractReport } from '../src/contractReport.js';
 
 function createMockPage(evaluateResult) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
     evaluate: vi.fn().mockResolvedValue(evaluateResult),
+    exposeFunction: vi.fn(),
   };
 }
 
@@ -129,5 +139,56 @@ describe("runTests", () => {
     const result = await runTests();
 
     expect(result).toBe(false);
+  });
+
+  it("should skip contract validation when no contracts configured", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await runTests();
+
+    expect(loadContracts).not.toHaveBeenCalled();
+  });
+
+  it("should run contract validation when contracts configured", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      contracts: [{ source: './openapi.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests();
+
+    expect(loadContracts).toHaveBeenCalled();
+    expect(page.exposeFunction).toHaveBeenCalledWith('__twdCollectMock', expect.any(Function));
+  });
+
+  it("should return true when contract errors in error mode", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      contracts: [{ source: './openapi.json', mode: 'error' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(true);
+
+    const result = await runTests();
+
+    expect(result).toBe(true);
   });
 });

@@ -1,0 +1,95 @@
+name: E2E Contract Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:ci
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Install test-example-app dependencies
+        working-directory: test-example-app
+        run: npm install
+
+      - name: Install mock service worker
+        working-directory: test-example-app
+        run: npx twd-js init public --save
+
+      - name: Cache Puppeteer browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/puppeteer
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
+      - name: Start dev server
+        working-directory: test-example-app
+        run: |
+          nohup npx vite --host > vite.log 2>&1 &
+          npx wait-on http://localhost:5173 --timeout 30000
+
+      - name: Run TWD tests (local CLI)
+        working-directory: test-example-app
+        run: node ../bin/twd-cli.js run
+
+      - name: Verify contract report was generated
+        working-directory: test-example-app
+        run: |
+          if [ ! -f .twd/contract-report.md ]; then
+            echo "ERROR: Contract report not generated"
+            exit 1
+          fi
+          echo "=== Contract Report ==="
+          cat .twd/contract-report.md
+
+      - name: Post contract report to PR
+        if: github.event_name == 'pull_request'
+        working-directory: test-example-app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          REPORT_PATH=".twd/contract-report.md"
+          echo "" >> "$REPORT_PATH"
+          echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
+          gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH"
