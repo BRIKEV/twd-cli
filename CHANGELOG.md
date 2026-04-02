@@ -1,3 +1,17 @@
+## 1.1.0 (2026-04-02)
+
+* feat: contract validation — validate collected mocks against OpenAPI 3.0/3.1 specs
+* feat: markdown contract report for CI/PR integration (`contractReportPath` config)
+* feat: composite GitHub Action (`BRIKEV/twd-cli/.github/actions/run`) for simplified CI setup
+* feat: comprehensive schema validation (string formats, number constraints, enum, array constraints, additionalProperties, nullable)
+* fix: key collected mocks by alias so all mocks appear in the report
+* perf: remove unnecessary `twd.visit()` from mock-only tests
+* perf: reuse Ajv instance across validations (14x faster)
+* ci: add E2E workflow with contract validation and PR reporting
+* ci: pin action SHAs for supply chain security
+* chore: update twd-js to 1.6.4
+* docs: rewrite README with CI action usage and contract validation guide
+
 ## <small>1.0.20 (2026-03-16)</small>
 
 * chore: update twd-js to 1.6.2
