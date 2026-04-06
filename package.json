@@ -23,7 +23,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "openapi-mock-validator": "^0.1.1",
+    "openapi-mock-validator": "^0.1.2",
     "puppeteer": "^24.40.0",
     "twd-js": "^1.6.4"
   },
