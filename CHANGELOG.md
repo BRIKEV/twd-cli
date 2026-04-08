@@ -1,3 +1,8 @@
+## <small>1.1.3 (2026-04-08)</small>
+
+* chore: update dependencies
+* chore: update openapi-mock-validator to 0.1.3
+
 ## 1.1.0 (2026-04-02)
 
 * feat: contract validation — validate collected mocks against OpenAPI 3.0/3.1 specs
