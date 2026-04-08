@@ -1,3 +1,8 @@
+## <small>1.1.4 (2026-04-08)</small>
+
+* chore: update dependencies
+* chore: update openapi-mock-validator to 0.1.4
+
 ## <small>1.1.3 (2026-04-08)</small>
 
 * chore: update dependencies
