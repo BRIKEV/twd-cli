@@ -51,7 +51,9 @@ export async function runTests() {
       const TestRunner = window.__testRunner;
       const testStatus = [];
       const runner = new TestRunner({
-        onStart: () => {},
+        onStart: (test) => {
+          test.status = "running";
+        },
         onPass: (test, retryAttempt) => {
           const entry = { id: test.id, status: "pass" };
           if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
