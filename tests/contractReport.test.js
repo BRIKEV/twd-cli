@@ -184,4 +184,54 @@ describe('printContractReport', () => {
 
     expect(hasErrors).toBe(false);
   });
+
+  it('prints test name when present in result', () => {
+    const output = {
+      results: [
+        {
+          alias: 'getPets',
+          url: '/api/v1/pets',
+          method: 'GET',
+          status: 200,
+          specSource: './openapi.json',
+          matchedPath: '/v1/pets',
+          mode: 'warn',
+          testName: 'Cart > should load items',
+          occurrence: 1,
+          validation: { valid: true, errors: [], warnings: [] },
+        },
+      ],
+      skipped: [],
+    };
+
+    printContractReport(output);
+
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
+    expect(logs).toContain('mock "getPets" — in "Cart > should load items"');
+  });
+
+  it('prints occurrence suffix when occurrence > 1', () => {
+    const output = {
+      results: [
+        {
+          alias: 'getPets',
+          url: '/api/v1/pets',
+          method: 'GET',
+          status: 200,
+          specSource: './openapi.json',
+          matchedPath: '/v1/pets',
+          mode: 'warn',
+          testName: 'Cart > should load items',
+          occurrence: 2,
+          validation: { valid: true, errors: [], warnings: [] },
+        },
+      ],
+      skipped: [],
+    };
+
+    printContractReport(output);
+
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
+    expect(logs).toContain('mock "getPets" 2nd time — in "Cart > should load items"');
+  });
 });
