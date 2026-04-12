@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
+import { buildTestPath } from './buildTestPath.js';
 
 export async function runTests() {
   let browser;
@@ -32,9 +33,15 @@ export async function runTests() {
 
     // Register mock collector for contract validation
     const collectedMocks = new Map();
+    const occurrenceCounters = new Map();
     if (config.contracts && config.contracts.length > 0) {
       await page.exposeFunction('__twdCollectMock', (mock) => {
-        collectedMocks.set(mock.alias, mock);
+        const occKey = `${mock.alias}:${mock.testId}`;
+        const count = (occurrenceCounters.get(occKey) || 0) + 1;
+        occurrenceCounters.set(occKey, count);
+
+        const dedupKey = `${mock.method}:${mock.url}:${mock.status}:${mock.testId}:${count}`;
+        collectedMocks.set(dedupKey, { ...mock, occurrence: count });
       });
     }
 
@@ -90,6 +97,13 @@ export async function runTests() {
     // Exit with appropriate code
     let hasFailures = testStatus.some(test => test.status === 'fail');
     console.timeEnd('Total Test Time');
+
+    // Enrich collected mocks with full test path names
+    for (const [, mock] of collectedMocks) {
+      if (mock.testId) {
+        mock.testName = buildTestPath(mock.testId, handlers);
+      }
+    }
 
     // Contract validation
     if (config.contracts && config.contracts.length > 0) {
