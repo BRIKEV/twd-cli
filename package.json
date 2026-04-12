@@ -25,14 +25,14 @@
   "dependencies": {
     "openapi-mock-validator": "^0.1.4",
     "puppeteer": "^24.40.0",
-    "twd-js": "^1.6.4"
+    "twd-js": "^1.6.5"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.2",
+    "@vitest/coverage-v8": "^4.1.4",
     "conventional-changelog": "^7.2.0",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.4"
   }
 }
