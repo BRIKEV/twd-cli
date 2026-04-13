@@ -154,4 +154,50 @@ describe('generateContractMarkdown', () => {
     expect(md).toContain('mock `badUser`');
     expect(md).toContain('mock `badEvent`');
   });
+
+  it('includes test name in failure details', () => {
+    const output = {
+      results: [
+        {
+          alias: 'getBadProduct', url: '/api/products', method: 'GET', status: 200,
+          specSource: './contracts/products.json', matchedPath: '/products', mode: 'error',
+          testName: 'Products > should display list',
+          occurrence: 1,
+          validation: {
+            valid: false,
+            errors: [{ path: 'response[0].name', message: 'missing required field', keyword: 'required' }],
+            warnings: [],
+          },
+        },
+      ],
+      skipped: [],
+    };
+
+    const md = generateContractMarkdown(output);
+
+    expect(md).toContain('mock `getBadProduct` — in "Products > should display list"');
+  });
+
+  it('includes occurrence suffix in failure details when > 1', () => {
+    const output = {
+      results: [
+        {
+          alias: 'getPets', url: '/api/pets', method: 'GET', status: 200,
+          specSource: './contracts/pets.json', matchedPath: '/pets', mode: 'error',
+          testName: 'Pets > should reload',
+          occurrence: 2,
+          validation: {
+            valid: false,
+            errors: [{ path: 'response', message: 'expected array', keyword: 'type' }],
+            warnings: [],
+          },
+        },
+      ],
+      skipped: [],
+    };
+
+    const md = generateContractMarkdown(output);
+
+    expect(md).toContain('mock `getPets` 2nd time — in "Pets > should reload"');
+  });
 });

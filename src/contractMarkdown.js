@@ -1,3 +1,10 @@
+import { formatMockLabel } from './formatMockLabel.js';
+
+function formatMockLabelMd(result) {
+  // Reuse the plain-text label but replace quoted alias with backtick-wrapped alias
+  return formatMockLabel(result).replace(`"${result.alias}"`, `\`${result.alias}\``);
+}
+
 export function generateContractMarkdown(output) {
   const { results, skipped } = output;
   const lines = [];
@@ -85,7 +92,7 @@ export function generateContractMarkdown(output) {
       lines.push('');
 
       for (const r of failures) {
-        lines.push(`- \`${r.method} ${r.matchedPath}\` (${r.status}) — mock \`${r.alias}\``);
+        lines.push(`- \`${r.method} ${r.matchedPath}\` (${r.status}) — ${formatMockLabelMd(r)}`);
         for (const err of r.validation.errors) {
           lines.push(`  - \`${err.path}\`: ${err.message}`);
         }

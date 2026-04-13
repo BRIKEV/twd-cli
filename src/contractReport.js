@@ -1,3 +1,5 @@
+import { formatMockLabel } from './formatMockLabel.js';
+
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
 const boldRed = (s) => `\x1b[1;31m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
@@ -45,7 +47,7 @@ export function printContractReport(output) {
 
       if (!result.validation.valid) {
         errorCount += result.validation.errors.length;
-        console.log(failColor(`  ✗ ${result.method} ${result.matchedPath} (${result.status}) — mock "${result.alias}"`));
+        console.log(failColor(`  ✗ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
         for (const err of result.validation.errors) {
           console.log(detailColor(`    → ${err.path}: ${err.message}`));
         }
@@ -54,12 +56,12 @@ export function printContractReport(output) {
           hasContractErrors = true;
         }
       } else if (result.validation.warnings.length === 0) {
-        console.log(green(`  ✓ ${result.method} ${result.matchedPath} (${result.status}) — mock "${result.alias}"`));
+        console.log(green(`  ✓ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
       }
 
       for (const warning of result.validation.warnings) {
         warningCount++;
-        console.log(yellow(`  ⚠ ${result.method} ${result.matchedPath} (${result.status}) — mock "${result.alias}"`));
+        console.log(yellow(`  ⚠ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
         console.log(yellow(`    ${warning.message}`));
         console.log('');
       }

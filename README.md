@@ -60,6 +60,8 @@ Create a `twd.config.json` file in your project root:
 
 **Important**: Puppeteer is **not** used as a testing framework here. It simply provides a headless browser to load your application — the same way a user would open Chrome. Once the page loads, all test execution happens inside the real browser context through the [TWD runner](https://brikev.github.io/twd/). Your tests interact with real DOM, real components, and real browser APIs — Puppeteer just opens the door and gets out of the way.
 
+**Contract Validation**: Mock overlaps are automatically handled — if multiple tests or calls use the same alias but with different HTTP methods/URLs/statuses, all are validated separately (no silent drops).
+
 1. Launches a headless browser via Puppeteer (the only thing Puppeteer does)
 2. Navigates to your dev server URL
 3. Waits for the app and TWD sidebar to be ready
@@ -188,12 +190,12 @@ Validate your test mocks against OpenAPI specs to catch drift between your mocks
 ```
 Source: ./contracts/users-3.0.json   ERROR
 
-  ✓ GET /users (200) — mock "getUsers"
-  ✗ GET /users/{userId} (200) — mock "getUserBadAddress"
+  ✓ GET /users (200) — mock "getUsers" — in "UserList > should display all users"
+  ✗ GET /users/{userId} (200) — mock "getUserBadAddress" — in "UserDetails > should fetch user details"
     → response.address.city: missing required property
     → response.address.country: missing required property
 
-  ⚠ GET /users/{userId} (404) — mock "getUserNotFound"
+  ⚠ GET /users/{userId} (404) — mock "getUserNotFound" 2nd time — in "UserDetails > should show not found"
     Status 404 not documented for GET /users/{userId}
 ```
 

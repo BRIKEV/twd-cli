@@ -187,3 +187,72 @@ describe('validateMocks', () => {
     expect(output.results[0].validation.warnings[0].type).toBe('UNMATCHED_STATUS');
   });
 });
+
+describe('validateMocks with testId and occurrence', () => {
+  let loadedContracts;
+
+  beforeEach(async () => {
+    loadedContracts = await loadContracts(
+      [{ source: './tests/fixtures/petstore-3.0.json', baseUrl: '/api' }],
+      path.resolve(__dirname, '..'),
+    );
+  });
+
+  it('validates multiple mocks with same alias but different endpoints', () => {
+    const mocks = new Map();
+    mocks.set('GET:/api/v1/pets:200:test-1:1', {
+      alias: 'getData',
+      url: '/api/v1/pets',
+      method: 'GET',
+      status: 200,
+      response: [{ id: 1, name: 'Fido' }],
+      urlRegex: false,
+      testId: 'test-1',
+      occurrence: 1,
+    });
+    mocks.set('POST:/api/v1/pets:201:test-2:1', {
+      alias: 'getData',
+      url: '/api/v1/pets',
+      method: 'POST',
+      status: 201,
+      response: { id: 1, name: 'Fido' },
+      urlRegex: false,
+      testId: 'test-2',
+      occurrence: 1,
+    });
+
+    const output = validateMocks(mocks, loadedContracts);
+
+    expect(output.results).toHaveLength(2);
+  });
+
+  it('validates same alias called twice in same test (different occurrences)', () => {
+    const mocks = new Map();
+    mocks.set('GET:/api/v1/pets:200:test-1:1', {
+      alias: 'getPets',
+      url: '/api/v1/pets',
+      method: 'GET',
+      status: 200,
+      response: [{ id: 1, name: 'Fido' }],
+      urlRegex: false,
+      testId: 'test-1',
+      occurrence: 1,
+    });
+    mocks.set('GET:/api/v1/pets:200:test-1:2', {
+      alias: 'getPets',
+      url: '/api/v1/pets',
+      method: 'GET',
+      status: 200,
+      response: [{ id: 2, name: 'Rex' }],
+      urlRegex: false,
+      testId: 'test-1',
+      occurrence: 2,
+    });
+
+    const output = validateMocks(mocks, loadedContracts);
+
+    expect(output.results).toHaveLength(2);
+    expect(output.results[0].validation.valid).toBe(true);
+    expect(output.results[1].validation.valid).toBe(true);
+  });
+});
