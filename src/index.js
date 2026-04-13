@@ -62,14 +62,17 @@ export async function runTests() {
           test.status = "running";
         },
         onPass: (test, retryAttempt) => {
+          test.status = "done";
           const entry = { id: test.id, status: "pass" };
           if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
           testStatus.push(entry);
         },
         onFail: (test, err) => {
+          test.status = "done";
           testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
         },
         onSkip: (test) => {
+          test.status = "done";
           testStatus.push({ id: test.id, status: "skip" });
         },
       }, { retryCount });

@@ -83,6 +83,8 @@ export function validateMocks(collectedMocks, contracts) {
         specSource: contract.source,
         matchedPath: pathMatch.path,
         mode: contract.mode,
+        testName: mock.testName,
+        occurrence: mock.occurrence,
         validation,
       });
 
