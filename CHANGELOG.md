@@ -1,3 +1,11 @@
+## <small>1.1.6 (2026-04-14)</small>
+
+* chore: update twd-js to 1.6.6
+
+## <small>1.1.5 (2026-04-08)</small>
+
+* fix: mock overlap in contract validation (#4)
+
 ## <small>1.1.4 (2026-04-08)</small>
 
 * chore: update dependencies
