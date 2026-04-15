@@ -1,3 +1,8 @@
+## <small>1.1.9 (2026-04-15)</small>
+
+* chore: update twd-js to 1.7.1
+* chore: update puppeteer to 24.41.0
+
 ## <small>1.1.8 (2026-04-15)</small>
 
 * chore: update twd-js to 1.7.0
