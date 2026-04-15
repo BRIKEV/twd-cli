@@ -1,3 +1,7 @@
+## <small>1.1.8 (2026-04-15)</small>
+
+* chore: update twd-js to 1.7.0
+
 ## <small>1.1.6 (2026-04-14)</small>
 
 * chore: update twd-js to 1.6.6
