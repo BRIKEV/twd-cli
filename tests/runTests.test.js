@@ -191,4 +191,57 @@ describe("runTests", () => {
 
     expect(result).toBe(true);
   });
+
+  it("preserves responseHeaders through the __twdCollectMock spread", async () => {
+    const testStatus = [{ id: 't-1', status: 'pass' }];
+    const handlers = [{ id: 't-1', name: 'test1', type: 'test' }];
+
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      // Drive the registered __twdCollectMock callback from inside page.evaluate,
+      // mirroring how a real browser test would trigger it.
+      evaluate: vi.fn().mockImplementation(async () => {
+        const exposed = page.exposeFunction.mock.calls.find(
+          (c) => c[0] === '__twdCollectMock'
+        );
+        expect(exposed).toBeDefined();
+        const collectMock = exposed[1];
+        await collectMock({
+          alias: 'getPhoto',
+          url: '/v1/photo',
+          method: 'GET',
+          status: 200,
+          response: 'bin',
+          testId: 't-1',
+          responseHeaders: { 'Content-Type': 'image/png' },
+        });
+        return { handlers, testStatus };
+      }),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      contracts: [{ source: './openapi.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([{ /* sentinel contract */ }]);
+
+    let capturedMocks;
+    vi.mocked(validateMocks).mockImplementation((mocks) => {
+      capturedMocks = mocks;
+      return { results: [], skipped: [] };
+    });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests();
+
+    expect(capturedMocks).toBeDefined();
+    const entries = Array.from(capturedMocks.values());
+    expect(entries).toHaveLength(1);
+    expect(entries[0].responseHeaders).toEqual({ 'Content-Type': 'image/png' });
+    expect(entries[0].alias).toBe('getPhoto');
+    expect(entries[0].occurrence).toBe(1);
+  });
 });
