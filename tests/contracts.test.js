@@ -256,3 +256,36 @@ describe('validateMocks with testId and occurrence', () => {
     expect(output.results[1].validation.valid).toBe(true);
   });
 });
+
+describe('validateMocks — Content-Type forwarding', () => {
+  let loadedContracts;
+
+  beforeEach(async () => {
+    loadedContracts = await loadContracts(
+      [{ source: './tests/fixtures/petstore-3.0.json', baseUrl: '/api' }],
+      path.resolve(__dirname, '..'),
+    );
+  });
+
+  it('forwards Content-Type from responseHeaders so image/* endpoints match', () => {
+    const mocks = new Map();
+    mocks.set('getPetPhoto', {
+      alias: 'getPetPhoto',
+      url: '/api/v1/pets/123/photo',
+      method: 'GET',
+      status: 200,
+      response: 'fake-binary-data',
+      urlRegex: false,
+      responseHeaders: { 'Content-Type': 'image/png' },
+    });
+
+    const output = validateMocks(mocks, loadedContracts);
+
+    expect(output.results).toHaveLength(1);
+    const missingSchema = output.results[0].validation.warnings.filter(
+      w => w.type === 'MISSING_SCHEMA'
+    );
+    expect(missingSchema).toHaveLength(0);
+    expect(output.results[0].validation.errors).toHaveLength(0);
+  });
+});
