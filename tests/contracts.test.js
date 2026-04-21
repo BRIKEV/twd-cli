@@ -288,4 +288,64 @@ describe('validateMocks — Content-Type forwarding', () => {
     expect(missingSchema).toHaveLength(0);
     expect(output.results[0].validation.errors).toHaveLength(0);
   });
+
+  it('resolves Content-Type when header key is lowercase', () => {
+    const mocks = new Map();
+    mocks.set('getPetPhoto', {
+      alias: 'getPetPhoto',
+      url: '/api/v1/pets/123/photo',
+      method: 'GET',
+      status: 200,
+      response: 'fake-binary-data',
+      urlRegex: false,
+      responseHeaders: { 'content-type': 'image/png' },
+    });
+    const output = validateMocks(mocks, loadedContracts);
+    expect(output.results[0].validation.warnings.some(w => w.type === 'MISSING_SCHEMA')).toBe(false);
+  });
+
+  it('resolves Content-Type when header key is upper-case', () => {
+    const mocks = new Map();
+    mocks.set('getPetPhoto', {
+      alias: 'getPetPhoto',
+      url: '/api/v1/pets/123/photo',
+      method: 'GET',
+      status: 200,
+      response: 'fake-binary-data',
+      urlRegex: false,
+      responseHeaders: { 'CONTENT-TYPE': 'image/png' },
+    });
+    const output = validateMocks(mocks, loadedContracts);
+    expect(output.results[0].validation.warnings.some(w => w.type === 'MISSING_SCHEMA')).toBe(false);
+  });
+
+  it('defaults to application/json when responseHeaders is missing', () => {
+    const mocks = new Map();
+    mocks.set('getPets', {
+      alias: 'getPets',
+      url: '/api/v1/pets',
+      method: 'GET',
+      status: 200,
+      response: [{ id: 1, name: 'Fido' }],
+      urlRegex: false,
+    });
+    const output = validateMocks(mocks, loadedContracts);
+    expect(output.results[0].validation.valid).toBe(true);
+    expect(output.results[0].validation.errors).toHaveLength(0);
+  });
+
+  it('defaults to application/json when responseHeaders has no Content-Type entry', () => {
+    const mocks = new Map();
+    mocks.set('getPets', {
+      alias: 'getPets',
+      url: '/api/v1/pets',
+      method: 'GET',
+      status: 200,
+      response: [{ id: 1, name: 'Fido' }],
+      urlRegex: false,
+      responseHeaders: { 'X-Request-Id': 'abc123' },
+    });
+    const output = validateMocks(mocks, loadedContracts);
+    expect(output.results[0].validation.valid).toBe(true);
+  });
 });
