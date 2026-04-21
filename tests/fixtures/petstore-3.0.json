@@ -82,6 +82,28 @@
           }
         }
       }
+    },
+    "/v1/pets/{petId}/photo": {
+      "get": {
+        "parameters": [
+          {
+            "name": "petId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pet photo",
+            "content": {
+              "image/*": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
