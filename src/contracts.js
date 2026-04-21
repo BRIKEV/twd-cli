@@ -2,6 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { OpenAPIMockValidator } from 'openapi-mock-validator';
 
+function readContentType(responseHeaders) {
+  if (!responseHeaders) return 'application/json';
+  for (const [key, value] of Object.entries(responseHeaders)) {
+    if (key.toLowerCase() === 'content-type') return value;
+  }
+  return 'application/json';
+}
+
 export async function loadContracts(contracts, workingDir) {
   const loaded = [];
 
@@ -67,12 +75,13 @@ export function validateMocks(collectedMocks, contracts) {
         continue;
       }
 
+      const contentType = readContentType(mock.responseHeaders);
       const validation = contract.validator.validateResponse(
         pathMatch.path,
         mock.method,
         mock.status,
         mock.response,
-        { strict: contract.strict },
+        { strict: contract.strict, contentType },
       );
 
       results.push({
