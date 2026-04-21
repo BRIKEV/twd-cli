@@ -897,3 +897,46 @@ describe("Contract Validation - Events Mismatches (OpenAPI 3.1 — error mode)",
     });
   });
 });
+
+// ── Content-Type forwarding — binary mocks vs image/* spec ───────────
+
+describe("Contract Validation - Content-Type forwarding (Products API)", () => {
+  it("should match image/png mock against image/* spec entry", async () => {
+    twd.mockRequest("getProductThumbnailPng", {
+      method: "GET",
+      url: "/api/products/550e8400-e29b-41d4-a716-446655440000/thumbnail",
+      status: 200,
+      response: "fake-png-bytes",
+      responseHeaders: { "Content-Type": "image/png" },
+    });
+  });
+
+  it("should match image/jpeg mock against image/* spec entry", async () => {
+    twd.mockRequest("getProductThumbnailJpeg", {
+      method: "GET",
+      url: "/api/products/550e8400-e29b-41d4-a716-446655440001/thumbnail",
+      status: 200,
+      response: "fake-jpeg-bytes",
+      responseHeaders: { "content-type": "image/jpeg" },
+    });
+  });
+
+  it("should warn when non-binary Content-Type has no matching spec entry", async () => {
+    twd.mockRequest("getProductsAsXml", {
+      method: "GET",
+      url: "/api/products",
+      status: 200,
+      response: "<products></products>",
+      responseHeaders: { "Content-Type": "application/xml" },
+    });
+  });
+
+  it("should warn when mock has no responseHeaders against image-only endpoint", async () => {
+    twd.mockRequest("getProductThumbnailNoHeader", {
+      method: "GET",
+      url: "/api/products/550e8400-e29b-41d4-a716-446655440002/thumbnail",
+      status: 200,
+      response: "fake-bytes",
+    });
+  });
+});

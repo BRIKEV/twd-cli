@@ -1,3 +1,7 @@
+## <small>1.1.10 (2026-04-21)</small>
+
+* fix: forward mock Content-Type to contract validator (avoids false-positive `MISSING_SCHEMA` for binary mocks)
+
 ## <small>1.1.9 (2026-04-15)</small>
 
 * chore: update twd-js to 1.7.1

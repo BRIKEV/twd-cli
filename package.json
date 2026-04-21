@@ -1,6 +1,6 @@
 {
   "name": "twd-cli",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "CLI tool for running TWD tests with Puppeteer",
   "type": "module",
   "main": "src/index.js",
@@ -23,9 +23,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "openapi-mock-validator": "^0.1.4",
-    "puppeteer": "^24.41.0",
-    "twd-js": "^1.7.1"
+    "openapi-mock-validator": "^0.2.0",
+    "puppeteer": "^24.42.0",
+    "twd-js": "^1.7.2"
   },
   "engines": {
     "node": ">=18.0.0"

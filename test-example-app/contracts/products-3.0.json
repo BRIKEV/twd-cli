@@ -74,6 +74,29 @@
         }
       }
     },
+    "/products/{productId}/thumbnail": {
+      "get": {
+        "operationId": "getProductThumbnail",
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product thumbnail image",
+            "content": {
+              "image/*": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/settings": {
       "get": {
         "operationId": "getSettings",
