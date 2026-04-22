@@ -53,8 +53,36 @@ Create a `twd.config.json` file in your project root:
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
 | `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
+| `parallel` | boolean | `false` | Opt-in flag. When `true`, tests run across two isolated browser contexts concurrently (see [Parallel Test Execution](#parallel-test-execution-experimental)) |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+
+### Parallel Test Execution (experimental)
+
+Set `parallel: true` in `twd.config.json` to run your suite across two isolated Puppeteer browser contexts concurrently. On a typical developer laptop this cuts wallclock test time roughly in half (measured ~1.8× speedup on a 60-test suite). The flag is opt-in; the default is `false` and existing behavior is unchanged.
+
+```jsonc
+{
+  "url": "http://localhost:5173",
+  "parallel": true,
+  "retryCount": 2
+}
+```
+
+How it works:
+
+- Two `browser.createBrowserContext()` sessions run in parallel via `Promise.all`. Each has its own service-worker scope and storage, so mocks in one worker cannot leak to the other.
+- Tests are partitioned round-robin by registration order (`idx % 2`) inside each worker — no cross-process coordination needed.
+- Chromium anti-throttle flags (`--disable-background-timer-throttling`, `--disable-renderer-backgrounding`, `--disable-backgrounding-occluded-windows`) are appended automatically.
+- The existing `retryCount` is honored per worker — flaky tests retry exactly like in serial mode.
+- Each worker writes its own coverage file to `.nyc_output/out-<i>.json`. `npx nyc report` merges them automatically — no extra tooling required.
+- Contract validation works unchanged. Mocks are collected per worker and merged before validation.
+
+Current limitations (worth knowing):
+
+- **Worker count is fixed at 2.** Higher counts give flakier results on most developer machines (CPU contention exceeds the 1-second `waitFor` default in some tests). Configurable worker counts are planned once twd-js ships deterministic test IDs.
+- **Per-worker reports.** Results print as two separate trees plus a combined summary. A single unified tree across workers is a follow-up improvement.
+- **CI tuning.** On resource-constrained runners, keep `retryCount: 2` (the default) to absorb occasional timeouts. Larger CI runners (4+ vCPUs) are comfortable at N=2.
 
 ## How It Works
 
