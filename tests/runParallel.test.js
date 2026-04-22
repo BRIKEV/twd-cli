@@ -246,4 +246,136 @@ describe('runParallel', () => {
       { recursive: true, force: true }
     );
   });
+
+  it('exposes __twdCollectMock on each page when contracts are configured', async () => {
+    const page0 = createMockPage({ handlers: [], testStatus: [] });
+    const page1 = createMockPage({ handlers: [], testStatus: [] });
+    const browser = createMockBrowser([createMockContext(page0), createMockContext(page1)]);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    const { validateMocks } = await import('../src/contracts.js');
+    const { printContractReport } = await import('../src/contractReport.js');
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runParallel(
+      { ...baseConfig, contracts: [{ source: './openapi.json' }] },
+      '/cwd',
+      [{ /* sentinel validator */ }]
+    );
+
+    expect(page0.exposeFunction).toHaveBeenCalledWith(
+      '__twdCollectMock',
+      expect.any(Function)
+    );
+    expect(page1.exposeFunction).toHaveBeenCalledWith(
+      '__twdCollectMock',
+      expect.any(Function)
+    );
+  });
+
+  it('does not expose __twdCollectMock when contracts are not configured', async () => {
+    const page0 = createMockPage({ handlers: [], testStatus: [] });
+    const page1 = createMockPage({ handlers: [], testStatus: [] });
+    const browser = createMockBrowser([createMockContext(page0), createMockContext(page1)]);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await runParallel(baseConfig, '/cwd', []);
+
+    expect(page0.exposeFunction).not.toHaveBeenCalled();
+    expect(page1.exposeFunction).not.toHaveBeenCalled();
+  });
+
+  it('feeds merged mocks (with workerIndex) into validateMocks', async () => {
+    function makePage(workerHandlers, workerTestStatus, mockToCollect) {
+      const page = {
+        goto: vi.fn(),
+        waitForSelector: vi.fn(),
+        exposeFunction: vi.fn(),
+        evaluate: vi.fn(),
+      };
+      page.evaluate
+        .mockImplementationOnce(async () => {
+          const exposed = page.exposeFunction.mock.calls.find(
+            (c) => c[0] === '__twdCollectMock'
+          );
+          expect(exposed).toBeDefined();
+          const collect = exposed[1];
+          await collect(mockToCollect);
+          return { handlers: workerHandlers, testStatus: workerTestStatus };
+        })
+        .mockResolvedValueOnce(null); // no coverage
+      return page;
+    }
+
+    const page0 = makePage(
+      [{ id: 't-0', name: 'describe0 > test0', type: 'test' }],
+      [{ id: 't-0', status: 'pass' }],
+      {
+        alias: 'getA',
+        method: 'GET',
+        url: '/api/a',
+        status: 200,
+        response: 'x',
+        testId: 't-0',
+      }
+    );
+    const page1 = makePage(
+      [{ id: 't-1', name: 'describe1 > test1', type: 'test' }],
+      [{ id: 't-1', status: 'pass' }],
+      {
+        alias: 'getB',
+        method: 'GET',
+        url: '/api/b',
+        status: 200,
+        response: 'y',
+        testId: 't-1',
+      }
+    );
+    const browser = createMockBrowser([createMockContext(page0), createMockContext(page1)]);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    const { validateMocks } = await import('../src/contracts.js');
+    const { printContractReport } = await import('../src/contractReport.js');
+    let capturedMocks;
+    vi.mocked(validateMocks).mockImplementation((mocks) => {
+      capturedMocks = mocks;
+      return { results: [], skipped: [] };
+    });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runParallel(
+      { ...baseConfig, contracts: [{ source: './openapi.json' }] },
+      '/cwd',
+      [{ /* sentinel */ }]
+    );
+
+    expect(capturedMocks).toBeDefined();
+    const entries = Array.from(capturedMocks.values());
+    expect(entries).toHaveLength(2);
+    const aliases = entries.map((e) => e.alias).sort();
+    expect(aliases).toEqual(['getA', 'getB']);
+    const workerIndices = entries.map((e) => e.workerIndex).sort();
+    expect(workerIndices).toEqual([0, 1]);
+  });
+
+  it('returns true when contract errors are printed', async () => {
+    const page0 = createMockPage({ handlers: [], testStatus: [] });
+    const page1 = createMockPage({ handlers: [], testStatus: [] });
+    const browser = createMockBrowser([createMockContext(page0), createMockContext(page1)]);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    const { validateMocks } = await import('../src/contracts.js');
+    const { printContractReport } = await import('../src/contractReport.js');
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(true);
+
+    const hasFailures = await runParallel(
+      { ...baseConfig, contracts: [{ source: './openapi.json' }] },
+      '/cwd',
+      [{ /* sentinel */ }]
+    );
+
+    expect(hasFailures).toBe(true);
+  });
 });

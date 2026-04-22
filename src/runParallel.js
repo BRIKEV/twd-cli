@@ -2,6 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
 import { reportResults } from 'twd-js/runner-ci';
+import { validateMocks } from './contracts.js';
+import { printContractReport } from './contractReport.js';
+import { generateContractMarkdown } from './contractMarkdown.js';
+import { buildTestPath } from './buildTestPath.js';
+import { mergeMocks } from './mergeMocks.js';
 
 const WORKERS = 2;
 
@@ -19,9 +24,26 @@ function mergeArgs(userArgs, extras) {
   return merged;
 }
 
-async function runWorker(browser, workerIndex, config, workingDir) {
+function makeMockCollector(workerMocks, workerCounters) {
+  return (mock) => {
+    const occKey = `${mock.alias}:${mock.testId}`;
+    const count = (workerCounters.get(occKey) || 0) + 1;
+    workerCounters.set(occKey, count);
+    const dedupKey = `${mock.method}:${mock.url}:${mock.status}:${mock.testId}:${count}`;
+    workerMocks.set(dedupKey, { ...mock, occurrence: count });
+  };
+}
+
+async function runWorker(browser, workerIndex, config, workingDir, contractsConfigured, workerMocks, workerCounters) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
+
+  if (contractsConfigured) {
+    await page.exposeFunction(
+      '__twdCollectMock',
+      makeMockCollector(workerMocks, workerCounters)
+    );
+  }
 
   await page.goto(config.url);
   await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
@@ -67,7 +89,6 @@ async function runWorker(browser, workerIndex, config, workingDir) {
     config.retryCount
   );
 
-  // Always dump coverage when enabled — including on failures, unlike serial.
   if (config.coverage) {
     const coverage = await page.evaluate(() => window.__coverage__);
     if (coverage) {
@@ -90,6 +111,10 @@ export async function runParallel(config, workingDir, contractValidators) {
     console.log(`Starting TWD test runner (parallel mode, ${WORKERS} workers)...`);
     console.log('Configuration:', JSON.stringify(config, null, 2));
 
+    const contractsConfigured = config.contracts && config.contracts.length > 0;
+    const workerMocks = Array.from({ length: WORKERS }, () => new Map());
+    const workerCounters = Array.from({ length: WORKERS }, () => new Map());
+
     if (config.coverage) {
       const nycDir = path.resolve(workingDir, config.nycOutputDir);
       if (fs.existsSync(nycDir)) {
@@ -106,7 +131,15 @@ export async function runParallel(config, workingDir, contractValidators) {
     console.time('Parallel test time');
     const workerResults = await Promise.all(
       Array.from({ length: WORKERS }, (_, i) =>
-        runWorker(browser, i, config, workingDir)
+        runWorker(
+          browser,
+          i,
+          config,
+          workingDir,
+          contractsConfigured,
+          workerMocks[i],
+          workerCounters[i]
+        )
       )
     );
     console.timeEnd('Parallel test time');
@@ -133,7 +166,36 @@ export async function runParallel(config, workingDir, contractValidators) {
       `Total: ${totalPass} passed, ${totalFail} failed, ${totalSkip} skipped`
     );
 
-    const hasFailures = totalFail > 0;
+    let hasFailures = totalFail > 0;
+
+    if (contractsConfigured) {
+      const merged = mergeMocks(workerMocks);
+
+      for (const [, mock] of merged) {
+        if (mock.testId) {
+          const workerHandlers = workerResults[mock.workerIndex].handlers;
+          mock.testName = buildTestPath(mock.testId, workerHandlers);
+        }
+      }
+
+      if (merged.size === 0) {
+        console.log('\nNo mocks collected — ensure twd-js supports contract collection');
+      }
+      const validationOutput = validateMocks(merged, contractValidators);
+      const hasContractErrors = printContractReport(validationOutput);
+      if (hasContractErrors) hasFailures = true;
+
+      if (config.contractReportPath) {
+        const reportPath = path.resolve(workingDir, config.contractReportPath);
+        const reportDir = path.dirname(reportPath);
+        if (!fs.existsSync(reportDir)) {
+          fs.mkdirSync(reportDir, { recursive: true });
+        }
+        const markdown = generateContractMarkdown(validationOutput);
+        fs.writeFileSync(reportPath, markdown);
+        console.log(`Contract report written to ${config.contractReportPath}`);
+      }
+    }
 
     await browser.close();
     console.log('Browser closed.');
