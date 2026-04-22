@@ -32,6 +32,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      parallel: false,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -56,6 +57,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      parallel: false,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -73,6 +75,7 @@ describe('loadConfig', () => {
       headless: false,
       puppeteerArgs: ['--disable-dev-shm-usage'],
       retryCount: 3,
+      parallel: true,
     };
 
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -100,6 +103,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      parallel: false,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),

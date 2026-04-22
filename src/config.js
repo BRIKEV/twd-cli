@@ -10,6 +10,7 @@ const DEFAULT_CONFIG = {
   headless: true,
   puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
   retryCount: 2,
+  parallel: false,
 };
 
 export function loadConfig() {
