@@ -244,4 +244,57 @@ describe("runTests", () => {
     expect(entries[0].alias).toBe('getPhoto');
     expect(entries[0].occurrence).toBe(1);
   });
+
+  it("delegates to runParallel and does NOT launch a single-page serial flow when parallel=true", async () => {
+    // When parallel mode is on, runTests should call runParallel (which
+    // itself launches puppeteer with createBrowserContext). The serial code
+    // path uses browser.newPage() on the default context. If parallel
+    // dispatch works, page.evaluate should never be called via the serial
+    // newPage() path — evidenced by puppeteer.launch being invoked exactly
+    // once with args including the anti-throttle flags.
+    const browser = {
+      createBrowserContext: vi.fn().mockImplementation(() => ({
+        newPage: vi.fn().mockResolvedValue({
+          goto: vi.fn(),
+          waitForSelector: vi.fn(),
+          exposeFunction: vi.fn(),
+          evaluate: vi.fn()
+            .mockResolvedValueOnce({ handlers: [], testStatus: [] })
+            .mockResolvedValueOnce(null),
+        }),
+        close: vi.fn(),
+      })),
+      newPage: vi.fn(), // serial path would call this — we assert it was NOT called
+      close: vi.fn(),
+    };
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      parallel: true,
+    });
+
+    await runTests();
+
+    expect(browser.newPage).not.toHaveBeenCalled();
+    expect(browser.createBrowserContext).toHaveBeenCalledTimes(2);
+
+    const launchArgs = vi.mocked(puppeteer.launch).mock.calls[0][0].args;
+    expect(launchArgs).toContain('--disable-renderer-backgrounding');
+  });
+
+  it("runs the serial path when parallel is absent (default false)", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    // defaultMockConfig has no `parallel` field — absent should mean serial.
+
+    await runTests();
+
+    expect(browser.newPage).toHaveBeenCalled();
+    // Anti-throttle flags are a parallel-only behavior — NOT in the serial launch.
+    const launchArgs = vi.mocked(puppeteer.launch).mock.calls[0][0].args;
+    expect(launchArgs).not.toContain('--disable-renderer-backgrounding');
+  });
 });
