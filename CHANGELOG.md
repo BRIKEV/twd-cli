@@ -1,3 +1,7 @@
+## <small>1.1.11 (2026-05-04)</small>
+
+* chore: update dependencies
+
 ## <small>1.1.10 (2026-04-21)</small>
 
 * fix: forward mock Content-Type to contract validator (avoids false-positive `MISSING_SCHEMA` for binary mocks)
