@@ -7,13 +7,23 @@ import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
+import { runParallel } from './runParallel.js';
 
 export async function runTests() {
+  const config = loadConfig();
+  const workingDir = process.cwd();
+
+  // Parallel mode — delegate early. Serial body below is unchanged.
+  if (config.parallel) {
+    let contractValidators = [];
+    if (config.contracts && config.contracts.length > 0) {
+      contractValidators = await loadContracts(config.contracts, workingDir);
+    }
+    return runParallel(config, workingDir, contractValidators);
+  }
+
   let browser;
   try {
-    const config = loadConfig();
-    const workingDir = process.cwd();
-
     console.log('Starting TWD test runner...');
     console.log('Configuration:', JSON.stringify(config, null, 2));
 
