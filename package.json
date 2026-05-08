@@ -23,9 +23,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "openapi-mock-validator": "^0.2.0",
-    "puppeteer": "^24.42.0",
-    "twd-js": "^1.7.3"
+    "openapi-mock-validator": "^0.3.0",
+    "puppeteer": "^24.43.0",
+    "twd-js": "^1.8.0"
   },
   "engines": {
     "node": ">=18.0.0"
