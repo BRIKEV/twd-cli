@@ -1,3 +1,9 @@
+## <small>1.1.12 (2026-05-08)</small>
+
+* chore: update twd-js to 1.8.0
+* chore: update puppeteer to 24.43.0
+* chore: update openapi-mock-validator to 0.3.0
+
 ## <small>1.1.11 (2026-05-04)</small>
 
 * chore: update dependencies
