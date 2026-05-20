@@ -210,6 +210,66 @@ describe('printContractReport', () => {
     expect(logs).toContain('mock "getPets" — in "Cart > should load items"');
   });
 
+  it('prefixes every glyph-led line with MOCK ', () => {
+    const output = {
+      results: [
+        // pass
+        {
+          alias: 'getPets',
+          url: '/api/v1/pets',
+          method: 'GET',
+          status: 200,
+          specSource: './openapi.json',
+          matchedPath: '/v1/pets',
+          mode: 'warn',
+          validation: { valid: true, errors: [], warnings: [] },
+        },
+        // fail
+        {
+          alias: 'createPet',
+          url: '/api/v1/pets',
+          method: 'POST',
+          status: 201,
+          specSource: './openapi.json',
+          matchedPath: '/v1/pets',
+          mode: 'warn',
+          validation: {
+            valid: false,
+            errors: [{ path: 'response.id', message: 'expected integer, got string', keyword: 'type' }],
+            warnings: [],
+          },
+        },
+        // warning
+        {
+          alias: 'serverError',
+          url: '/api/v1/pets',
+          method: 'GET',
+          status: 500,
+          specSource: './openapi.json',
+          matchedPath: '/v1/pets',
+          mode: 'warn',
+          validation: {
+            valid: true,
+            errors: [],
+            warnings: [{ type: 'UNMATCHED_STATUS', message: 'Status 500 not documented' }],
+          },
+        },
+      ],
+      skipped: [
+        { alias: 'untracked', url: '/whatever', reason: 'No matching path in any spec' },
+      ],
+    };
+
+    printContractReport(output);
+
+    const lines = consoleSpy.mock.calls.map((c) => stripAnsi(c[0]));
+    const glyphLines = lines.filter((l) => /^\s*(MOCK\s+)?[✓✗⚠ℹ]/.test(l));
+    expect(glyphLines.length).toBeGreaterThanOrEqual(4);
+    for (const line of glyphLines) {
+      expect(line).toMatch(/^\s*MOCK [✓✗⚠ℹ]/);
+    }
+  });
+
   it('prints occurrence suffix when occurrence > 1', () => {
     const output = {
       results: [

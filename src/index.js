@@ -7,6 +7,7 @@ import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
+import { formatTestSummary, formatFailedTestsBlock } from './testSummary.js';
 
 export async function runTests() {
   let browser;
@@ -29,7 +30,6 @@ export async function runTests() {
     });
 
     const page = await browser.newPage();
-    console.time('Total Test Time');
 
     // Register mock collector for contract validation
     const collectedMocks = new Map();
@@ -46,6 +46,7 @@ export async function runTests() {
     }
 
     // Navigate to your development server
+    const startedAt = Date.now();
     console.log(`Navigating to ${config.url} ...`);
     await page.goto(config.url);
 
@@ -80,6 +81,8 @@ export async function runTests() {
       return { handlers: Array.from(handlers.values()), testStatus };
     }, config.retryCount);
 
+    const durationMs = Date.now() - startedAt;
+
     console.log(`Tests to report: ${testStatus.length}`);
 
     // Display results in console
@@ -99,7 +102,6 @@ export async function runTests() {
 
     // Exit with appropriate code
     let hasFailures = testStatus.some(test => test.status === 'fail');
-    console.timeEnd('Total Test Time');
 
     // Enrich collected mocks with full test path names
     for (const [, mock] of collectedMocks) {
@@ -157,6 +159,15 @@ export async function runTests() {
 
     await browser.close();
     console.log('Browser closed.');
+
+    console.log('');
+    console.log(formatTestSummary({ testStatus, durationMs }));
+    const failedBlock = formatFailedTestsBlock({ testStatus, handlers });
+    if (failedBlock) {
+      for (const line of failedBlock.split('\n')) {
+        console.log(line);
+      }
+    }
 
     return hasFailures;
 

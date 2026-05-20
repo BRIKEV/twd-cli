@@ -58,8 +58,6 @@ describe("runTests", () => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'time').mockImplementation(() => {});
-    vi.spyOn(console, 'timeEnd').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -243,5 +241,34 @@ describe("runTests", () => {
     expect(entries[0].responseHeaders).toEqual({ 'Content-Type': 'image/png' });
     expect(entries[0].alias).toBe('getPhoto');
     expect(entries[0].occurrence).toBe(1);
+  });
+
+  it("should print the Tests: summary line and Failed tests block", async () => {
+    const testStatus = [
+      { id: '1', status: 'pass' },
+      { id: '2', status: 'fail', error: 'boom' },
+      { id: '3', status: 'skip' },
+    ];
+    const handlers = [
+      { id: '1', name: 'should render', type: 'test' },
+      { id: '2', name: 'should submit form', type: 'test' },
+      { id: '3', name: 'should show error', type: 'test' },
+    ];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await runTests();
+
+    const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const logs = consoleSpy.mock.calls.map((c) => stripAnsi(String(c[0])));
+
+    const summaryLine = logs.find((l) => l.startsWith('Tests:'));
+    expect(summaryLine).toBeDefined();
+    expect(summaryLine).toMatch(/^Tests: 1 passed, 1 failed, 1 skipped \(3 total\) in \d+:\d{2}\.\d{3}$/);
+
+    const failedHeader = logs.find((l) => l === 'Failed tests:');
+    expect(failedHeader).toBeDefined();
+    expect(logs.some((l) => l.includes('should submit form'))).toBe(true);
   });
 });
