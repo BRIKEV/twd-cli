@@ -47,7 +47,7 @@ export function printContractReport(output) {
 
       if (!result.validation.valid) {
         errorCount += result.validation.errors.length;
-        console.log(failColor(`  ✗ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
+        console.log(failColor(`  MOCK ✗ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
         for (const err of result.validation.errors) {
           console.log(detailColor(`    → ${err.path}: ${err.message}`));
         }
@@ -56,12 +56,12 @@ export function printContractReport(output) {
           hasContractErrors = true;
         }
       } else if (result.validation.warnings.length === 0) {
-        console.log(green(`  ✓ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
+        console.log(green(`  MOCK ✓ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
       }
 
       for (const warning of result.validation.warnings) {
         warningCount++;
-        console.log(yellow(`  ⚠ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
+        console.log(yellow(`  MOCK ⚠ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
         console.log(yellow(`    ${warning.message}`));
         console.log('');
       }
@@ -71,7 +71,7 @@ export function printContractReport(output) {
   if (skipped.length > 0) {
     console.log(dim('Skipped:'));
     for (const skip of skipped) {
-      console.log(dim(`  ℹ "${skip.alias}" — ${skip.url}`));
+      console.log(dim(`  MOCK ℹ "${skip.alias}" — ${skip.url}`));
       console.log(dim(`    ${skip.reason === 'urlRegex mock' ? 'Regex URL pattern' : 'No matching path in any spec'}`));
     }
     console.log('');
