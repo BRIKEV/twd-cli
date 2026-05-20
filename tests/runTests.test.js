@@ -58,8 +58,6 @@ describe("runTests", () => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'time').mockImplementation(() => {});
-    vi.spyOn(console, 'timeEnd').mockImplementation(() => {});
   });
 
   afterEach(() => {

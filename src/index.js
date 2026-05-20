@@ -157,6 +157,9 @@ export async function runTests() {
       }
     }
 
+    await browser.close();
+    console.log('Browser closed.');
+
     console.log('');
     console.log(formatTestSummary({ testStatus, durationMs }));
     const failedBlock = formatFailedTestsBlock({ testStatus, handlers });
@@ -165,9 +168,6 @@ export async function runTests() {
         console.log(line);
       }
     }
-
-    await browser.close();
-    console.log('Browser closed.');
 
     return hasFailures;
 
