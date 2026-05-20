@@ -16,3 +16,17 @@ export function formatTestSummary({ testStatus, durationMs }) {
 
   return `Tests: ${passedStr}, ${failedStr}, ${skippedStr} (${total} total) in ${formatDuration(durationMs)}`;
 }
+
+export function formatFailedTestsBlock({ testStatus, handlers }) {
+  const failures = testStatus.filter((t) => t.status === 'fail');
+  if (failures.length === 0) return null;
+
+  const handlersById = new Map(handlers.map((h) => [h.id, h]));
+  const lines = ['Failed tests:'];
+  for (const failure of failures) {
+    const handler = handlersById.get(failure.id);
+    const name = handler ? handler.name : failure.id;
+    lines.push(`  ${red('✗')} ${name}`);
+  }
+  return lines.join('\n');
+}
