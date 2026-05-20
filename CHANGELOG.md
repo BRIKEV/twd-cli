@@ -1,3 +1,7 @@
+## <small>1.1.13 (2026-05-20)</small>
+
+* feat: add Tests: summary line, Failed tests block, and MOCK prefix on contract lines (#7)
+
 ## <small>1.1.12 (2026-05-08)</small>
 
 * chore: update twd-js to 1.8.0
