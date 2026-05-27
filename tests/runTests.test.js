@@ -81,6 +81,41 @@ describe("runTests", () => {
     expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3);
   });
 
+  it("should pass protocolTimeout to puppeteer.launch", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      protocolTimeout: 600000,
+    });
+
+    await runTests();
+
+    expect(puppeteer.launch).toHaveBeenCalledWith(
+      expect.objectContaining({ protocolTimeout: 600000 })
+    );
+  });
+
+  it("should print a protocolTimeout hint when the run aborts on timeout", async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const page = createMockPage({});
+    const timeoutError = new Error('Runtime.callFunctionOn timed out.');
+    timeoutError.name = 'ProtocolError';
+    page.evaluate = vi.fn().mockRejectedValue(timeoutError);
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
+    expect(browser.close).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("should log retry summary when tests were retried", async () => {
     const testStatus = [
       { id: '1', status: 'pass', retryAttempt: 2 },

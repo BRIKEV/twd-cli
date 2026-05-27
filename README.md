@@ -37,7 +37,8 @@ Create a `twd.config.json` file in your project root:
   "nycOutputDir": "./.nyc_output",
   "headless": true,
   "puppeteerArgs": ["--no-sandbox", "--disable-setuid-sandbox"],
-  "retryCount": 2
+  "retryCount": 2,
+  "protocolTimeout": 300000
 }
 ```
 
@@ -53,6 +54,7 @@ Create a `twd.config.json` file in your project root:
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
 | `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
+| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). The whole suite runs inside one `page.evaluate`, so this bounds the **entire run** — raise it (e.g. `600000`) for slow CI; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
 

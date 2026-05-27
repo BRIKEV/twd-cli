@@ -32,6 +32,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      protocolTimeout: 300000,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -56,6 +57,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      protocolTimeout: 300000,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -73,6 +75,7 @@ describe('loadConfig', () => {
       headless: false,
       puppeteerArgs: ['--disable-dev-shm-usage'],
       retryCount: 3,
+      protocolTimeout: 600000,
     };
 
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -100,6 +103,7 @@ describe('loadConfig', () => {
       headless: true,
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
+      protocolTimeout: 300000,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),
@@ -121,6 +125,15 @@ describe('loadConfig', () => {
 
     expect(config.retryCount).toBe(3);
     expect(config.url).toBe('http://localhost:5173');
+  });
+
+  it('should default protocolTimeout and allow user override', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    expect(loadConfig().protocolTimeout).toBe(300000);
+
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ protocolTimeout: 0 }));
+    expect(loadConfig().protocolTimeout).toBe(0);
   });
 
   it('should handle partial user config correctly', () => {
