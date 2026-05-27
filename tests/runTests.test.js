@@ -99,6 +99,23 @@ describe("runTests", () => {
     );
   });
 
+  it("should print a protocolTimeout hint when the run aborts on timeout", async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const page = createMockPage({});
+    const timeoutError = new Error('Runtime.callFunctionOn timed out.');
+    timeoutError.name = 'ProtocolError';
+    page.evaluate = vi.fn().mockRejectedValue(timeoutError);
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
+    expect(browser.close).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("should log retry summary when tests were retried", async () => {
     const testStatus = [
       { id: '1', status: 'pass', retryAttempt: 2 },

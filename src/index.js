@@ -9,6 +9,14 @@ import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
 import { formatTestSummary, formatFailedTestsBlock } from './testSummary.js';
 
+function isProtocolTimeout(error) {
+  const message = error && error.message ? error.message : '';
+  return (
+    (error && error.name === 'ProtocolError' && /timed out/i.test(message)) ||
+    /protocolTimeout/i.test(message)
+  );
+}
+
 export async function runTests() {
   let browser;
   try {
@@ -174,6 +182,13 @@ export async function runTests() {
 
   } catch (error) {
     console.error('Error running tests:', error);
+    if (isProtocolTimeout(error)) {
+      console.error(
+        '\nThis looks like a Puppeteer protocolTimeout. The whole test suite runs in a single\n' +
+        'page.evaluate call, so the run aborts if it takes longer than "protocolTimeout" (ms).\n' +
+        'Raise it in twd.config.json, e.g. { "protocolTimeout": 600000 } (0 = no timeout).'
+      );
+    }
     if (browser) await browser.close();
     throw error;
   }
