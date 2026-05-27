@@ -1,3 +1,7 @@
+## <small>1.1.14 (2026-05-27)</small>
+
+* feat: configurable protocolTimeout to avoid 180s suite aborts (#8) ([c03b054](https://github.com/BRIKEV/twd-cli/commit/c03b054)), closes [#8](https://github.com/BRIKEV/twd-cli/issues/8)
+
 ## <small>1.1.13 (2026-05-20)</small>
 
 * feat: add Tests: summary line, Failed tests block, and MOCK prefix on contract lines (#7)
