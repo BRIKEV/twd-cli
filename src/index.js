@@ -27,6 +27,7 @@ export async function runTests() {
     browser = await puppeteer.launch({
       headless: config.headless,
       args: config.puppeteerArgs,
+      protocolTimeout: config.protocolTimeout,
     });
 
     const page = await browser.newPage();

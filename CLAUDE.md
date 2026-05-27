@@ -19,7 +19,9 @@ The codebase is a small ESM-only Node.js CLI with two core source files:
 
 **`bin/twd-cli.js`** — CLI entry point. Parses `process.argv` for the `run` command, calls `runTests()`, and exits with code 0 (pass) or 1 (failure).
 
-**`src/config.js`** — `loadConfig()` reads `twd.config.json` from `process.cwd()`, merges it with defaults (url, timeout, coverage, headless, puppeteerArgs), and returns the merged config. Falls back to defaults if the file is missing or unparseable.
+**`src/config.js`** — `loadConfig()` reads `twd.config.json` from `process.cwd()`, merges it with defaults (url, timeout, coverage, headless, puppeteerArgs, retryCount, protocolTimeout), and returns the merged config. Falls back to defaults if the file is missing or unparseable.
+
+`protocolTimeout` (default `300000`) is passed to `puppeteer.launch` and bounds Puppeteer's CDP commands. It matters because the entire suite runs inside a single `page.evaluate` (`Runtime.callFunctionOn`), so Puppeteer's implicit 180000ms ceiling would abort long-but-passing suites with no per-test output. Raise it for slow CI; `0` means no timeout.
 
 **`src/index.js`** — `runTests()` is the main orchestrator:
 1. Loads config via `loadConfig()`
