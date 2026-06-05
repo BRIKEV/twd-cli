@@ -11,6 +11,7 @@ twd-cli is a CLI tool for running TWD (Test While Developing) browser-based test
 - `npm test` — Run tests in watch mode (vitest)
 - `npm run test:ci` — Run tests once with V8 coverage
 - `npm run execute:cli` — Run the CLI locally (`node ./bin/twd-cli.js`)
+- `npm run lock:linux` — Regenerate package-lock.json inside a Linux node:24 container (Docker must be running). Required after dependency updates: npm on macOS never installs the wasm32-wasi optional packages, so it leaves their transitive deps (`@emnapi/*`) stale in the lock, which breaks `npm ci` on Linux CI.
 - `npx twd-cli run` — Run TWD tests (the user-facing command)
 
 ## Architecture
