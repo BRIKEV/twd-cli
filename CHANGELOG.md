@@ -1,3 +1,9 @@
+## <small>1.1.15 (2026-06-06)</small>
+
+* chore: update twd-js to 1.8.1
+* chore: update puppeteer to 25.1.0
+* chore: update vitest to 4.1.8
+
 ## <small>1.1.14 (2026-05-27)</small>
 
 * feat: configurable protocolTimeout to avoid 180s suite aborts (#8) ([c03b054](https://github.com/BRIKEV/twd-cli/commit/c03b054)), closes [#8](https://github.com/BRIKEV/twd-cli/issues/8)
