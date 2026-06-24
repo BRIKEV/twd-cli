@@ -91,7 +91,7 @@ export async function runTests(options = {}) {
 
       if (unmatchedFilters.length > 0) {
         console.warn(
-          `Warning: no tests matched: ${unmatchedFilters.map((f) => `"${f}"`).join(', ')}`
+          `Warning: these filter(s) matched no tests (others did): ${unmatchedFilters.map((f) => `"${f}"`).join(', ')}`
         );
       }
 

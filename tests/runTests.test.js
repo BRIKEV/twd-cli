@@ -342,6 +342,34 @@ describe("runTests", () => {
     errorSpy.mockRestore();
   });
 
+  it("warns about filters that matched nothing on a partial match", async () => {
+    const registry = [
+      { id: 's1', name: 'Login', parent: undefined, type: 'suite' },
+      { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
+    ];
+    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(registry)
+        .mockResolvedValueOnce(runResult),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTests({ testFilters: ['Login', 'nope'] });
+
+    expect(result).toBe(false);
+    expect(page.evaluate).toHaveBeenNthCalledWith(2, expect.any(Function), 2, ['t1']);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('matched no tests') && w.includes('nope'))).toBe(true);
+    expect(warnings.some((w) => w.includes('"Login"'))).toBe(false);
+    warnSpy.mockRestore();
+  });
+
   it("skips coverage collection when a filter is active", async () => {
     const registry = [
       { id: 't1', name: 'shows error', parent: undefined, type: 'test' },
