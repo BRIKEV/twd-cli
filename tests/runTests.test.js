@@ -77,8 +77,8 @@ describe("runTests", () => {
 
     await runTests();
 
-    // page.evaluate is called with (fn, retryCount)
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3);
+    // page.evaluate is called with (fn, retryCount, selectedIds)
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3, null);
   });
 
   it("should pass protocolTimeout to puppeteer.launch", async () => {
@@ -276,6 +276,122 @@ describe("runTests", () => {
     expect(entries[0].responseHeaders).toEqual({ 'Content-Type': 'image/png' });
     expect(entries[0].alias).toBe('getPhoto');
     expect(entries[0].occurrence).toBe(1);
+  });
+
+  it("passes selectedIds=null to the run evaluate when no filter", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    await runTests();
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, null);
+  });
+
+  it("runs only matching tests when a --test filter is given", async () => {
+    const registry = [
+      { id: 's1', name: 'Login', parent: undefined, type: 'suite' },
+      { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
+      { id: 't2', name: 'redirects', parent: 's1', type: 'test' },
+    ];
+    const runResult = {
+      handlers: registry,
+      testStatus: [{ id: 't1', status: 'pass' }],
+    };
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(registry)   // enumeration pass
+        .mockResolvedValueOnce(runResult), // run pass
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+
+    const result = await runTests({ testFilters: ['shows error'] });
+
+    expect(result).toBe(false);
+    // second evaluate call is the run; selectedIds is the matched ids
+    expect(page.evaluate).toHaveBeenNthCalledWith(2, expect.any(Function), 2, ['t1']);
+  });
+
+  it("returns true and skips the run when a filter matches nothing", async () => {
+    const registry = [
+      { id: 't1', name: 'shows error', parent: undefined, type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn().mockResolvedValueOnce(registry),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runTests({ testFilters: ['nope'] });
+
+    expect(result).toBe(true);
+    expect(page.evaluate).toHaveBeenCalledTimes(1); // enumeration only, no run
+    expect(browser.close).toHaveBeenCalled();
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('No tests matched') && e.includes('nope'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("warns about filters that matched nothing on a partial match", async () => {
+    const registry = [
+      { id: 's1', name: 'Login', parent: undefined, type: 'suite' },
+      { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
+    ];
+    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(registry)
+        .mockResolvedValueOnce(runResult),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTests({ testFilters: ['Login', 'nope'] });
+
+    expect(result).toBe(false);
+    expect(page.evaluate).toHaveBeenNthCalledWith(2, expect.any(Function), 2, ['t1']);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('matched no tests') && w.includes('nope'))).toBe(true);
+    expect(warnings.some((w) => w.includes('"Login"'))).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it("skips coverage collection when a filter is active", async () => {
+    const registry = [
+      { id: 't1', name: 'shows error', parent: undefined, type: 'test' },
+    ];
+    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(registry)
+        .mockResolvedValueOnce(runResult),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, coverage: true });
+
+    await runTests({ testFilters: ['shows error'] });
+
+    // only the 2 evaluate calls happened (enumeration + run); coverage would be a 3rd
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
   });
 
   it("should print the Tests: summary line and Failed tests block", async () => {

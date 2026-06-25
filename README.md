@@ -24,6 +24,31 @@ Run tests with default configuration:
 npx twd-cli run
 ```
 
+### Filtering tests
+
+Run only a subset of tests with the repeatable `--test` flag. Matching is
+**case-insensitive** and matches a **substring** of each test's full
+`"Suite > test name"` path:
+
+```bash
+# Run every test whose name contains "shows error"
+npx twd-cli run --test "shows error"
+
+# Because matching uses the full "suite > test" path, passing a describe
+# name runs every test inside that describe block:
+npx twd-cli run --test "Login"
+
+# Multiple --test flags are combined with OR (a test runs if it matches any):
+npx twd-cli run --test "Login" --test "Signup"
+```
+
+Notes:
+
+- If no test matches any filter, the run exits with code `1` and prints
+  `No tests matched filter(s): …` — so a typo won't silently look like a pass.
+- Code coverage collection is skipped while a `--test` filter is active, since a
+  filtered run is a partial (debug) run.
+
 ### Configuration
 
 Create a `twd.config.json` file in your project root:

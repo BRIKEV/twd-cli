@@ -8,6 +8,7 @@ import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
 import { formatTestSummary, formatFailedTestsBlock } from './testSummary.js';
+import { selectTestIds } from './filterTests.js';
 
 function isProtocolTimeout(error) {
   const message = error && error.message ? error.message : '';
@@ -17,7 +18,8 @@ function isProtocolTimeout(error) {
   );
 }
 
-export async function runTests() {
+export async function runTests(options = {}) {
+  const { testFilters = [] } = options;
   let browser;
   try {
     const config = loadConfig();
@@ -63,8 +65,42 @@ export async function runTests() {
     await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
     console.log('Page loaded. Starting tests...');
 
+    // Resolve --test filters to a concrete set of test ids (null = run all)
+    let selectedIds = null;
+    if (testFilters.length > 0) {
+      const registeredHandlers = await page.evaluate(() => {
+        const state = window.__TWD_STATE__;
+        if (!state || !state.handlers) return [];
+        return Array.from(state.handlers.values()).map((h) => ({
+          id: h.id,
+          name: h.name,
+          parent: h.parent,
+          type: h.type,
+        }));
+      });
+
+      const { ids, unmatchedFilters } = selectTestIds(registeredHandlers, testFilters);
+
+      if (ids.length === 0) {
+        console.error(
+          `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`
+        );
+        await browser.close();
+        return true;
+      }
+
+      if (unmatchedFilters.length > 0) {
+        console.warn(
+          `Warning: these filter(s) matched no tests (others did): ${unmatchedFilters.map((f) => `"${f}"`).join(', ')}`
+        );
+      }
+
+      selectedIds = ids;
+      console.log(`Filtering: running ${ids.length} test(s) matching --test filter(s).`);
+    }
+
     // Execute all tests
-    const { handlers, testStatus } = await page.evaluate(async (retryCount) => {
+    const { handlers, testStatus } = await page.evaluate(async (retryCount, selectedIds) => {
       const TestRunner = window.__testRunner;
       const testStatus = [];
       const runner = new TestRunner({
@@ -86,9 +122,11 @@ export async function runTests() {
           testStatus.push({ id: test.id, status: "skip" });
         },
       }, { retryCount });
-      const handlers = await runner.runAll();
+      const handlers = selectedIds
+        ? await runner.runByIds(selectedIds)
+        : await runner.runAll();
       return { handlers: Array.from(handlers.values()), testStatus };
-    }, config.retryCount);
+    }, config.retryCount, selectedIds);
 
     const durationMs = Date.now() - startedAt;
 
@@ -143,8 +181,11 @@ export async function runTests() {
       }
     }
 
-    // Handle code coverage if enabled
-    if (config.coverage && !hasFailures) {
+    // Handle code coverage if enabled (skipped when a --test filter is active)
+    if (selectedIds && config.coverage) {
+      console.log('Skipping coverage collection (test filter active).');
+    }
+    if (config.coverage && !hasFailures && !selectedIds) {
       const coverage = await page.evaluate(() => window.__coverage__);
       if (coverage) {
         console.log('Collecting code coverage data...');
