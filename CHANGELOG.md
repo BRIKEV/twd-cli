@@ -1,3 +1,8 @@
+## <small>1.2.0 (2026-06-26)</small>
+
+* feat: add --test filter flag for targeted test runs (#9) ([795e76e](https://github.com/BRIKEV/twd-cli/commit/795e76e)), closes [#9](https://github.com/BRIKEV/twd-cli/issues/9)
+* fix: regenerate lockfile on linux to sync @emnapi to 1.10.0 ([f6c2ced](https://github.com/BRIKEV/twd-cli/commit/f6c2ced))
+
 ## <small>1.1.15 (2026-06-06)</small>
 
 * chore: update twd-js to 1.8.1
