@@ -11,6 +11,9 @@ if (command === 'run') {
     const hasFailures = await runTests({ testFilters });
     process.exit(hasFailures ? 1 : 0);
   } catch (error) {
+    if (!error?.reported) {
+      console.error(error?.message ?? String(error));
+    }
     process.exit(1);
   }
 } else {

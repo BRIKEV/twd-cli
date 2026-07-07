@@ -1,32 +1,22 @@
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
-import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from './config.js';
 import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
-import { formatTestSummary, formatFailedTestsBlock } from './testSummary.js';
+import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
-
-function isProtocolTimeout(error) {
-  const message = error && error.message ? error.message : '';
-  return (
-    (error && error.name === 'ProtocolError' && /timed out/i.test(message)) ||
-    /protocolTimeout/i.test(message)
-  );
-}
+import { explainError } from './diagnostics.js';
 
 export async function runTests(options = {}) {
   const { testFilters = [] } = options;
   let browser;
+  let config;
   try {
-    const config = loadConfig();
+    config = loadConfig();
     const workingDir = process.cwd();
-
-    console.log('Starting TWD test runner...');
-    console.log('Configuration:', JSON.stringify(config, null, 2));
 
     // Load contract validators if configured
     let contractValidators = [];
@@ -63,22 +53,22 @@ export async function runTests(options = {}) {
 
     // Wait for the selector to be available
     await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
-    console.log('Page loaded. Starting tests...');
+
+    // Enumerate registered handlers (for the count line and --test filtering)
+    const registeredHandlers = await page.evaluate(() => {
+      const state = window.__TWD_STATE__;
+      if (!state || !state.handlers) return [];
+      return Array.from(state.handlers.values()).map((h) => ({
+        id: h.id,
+        name: h.name,
+        parent: h.parent,
+        type: h.type,
+      }));
+    });
 
     // Resolve --test filters to a concrete set of test ids (null = run all)
     let selectedIds = null;
     if (testFilters.length > 0) {
-      const registeredHandlers = await page.evaluate(() => {
-        const state = window.__TWD_STATE__;
-        if (!state || !state.handlers) return [];
-        return Array.from(state.handlers.values()).map((h) => ({
-          id: h.id,
-          name: h.name,
-          parent: h.parent,
-          type: h.type,
-        }));
-      });
-
       const { ids, unmatchedFilters } = selectTestIds(registeredHandlers, testFilters);
 
       if (ids.length === 0) {
@@ -97,6 +87,9 @@ export async function runTests(options = {}) {
 
       selectedIds = ids;
       console.log(`Filtering: running ${ids.length} test(s) matching --test filter(s).`);
+    } else {
+      const testCount = registeredHandlers.filter((h) => h.type !== 'suite').length;
+      console.log(`Running ${testCount} test(s)...`);
     }
 
     // Execute all tests
@@ -129,23 +122,6 @@ export async function runTests(options = {}) {
     }, config.retryCount, selectedIds);
 
     const durationMs = Date.now() - startedAt;
-
-    console.log(`Tests to report: ${testStatus.length}`);
-
-    // Display results in console
-    reportResults(handlers, testStatus);
-
-    // Display retry summary if any tests were retried
-    const retriedTests = testStatus.filter(t => t.retryAttempt >= 2);
-    if (retriedTests.length > 0) {
-      console.log('\n⟳ Retried tests:');
-      for (const t of retriedTests) {
-        const handler = handlers.find(h => h.id === t.id);
-        const name = handler ? handler.name : t.id;
-        console.log(`  ✓ ${name} (passed on attempt ${t.retryAttempt})`);
-      }
-      console.log(`  ${retriedTests.length} test(s) required retries to pass.`);
-    }
 
     // Exit with appropriate code
     let hasFailures = testStatus.some(test => test.status === 'fail');
@@ -188,7 +164,6 @@ export async function runTests(options = {}) {
     if (config.coverage && !hasFailures && !selectedIds) {
       const coverage = await page.evaluate(() => window.__coverage__);
       if (coverage) {
-        console.log('Collecting code coverage data...');
         const coverageDir = path.resolve(workingDir, config.coverageDir);
         const nycDir = path.resolve(workingDir, config.nycOutputDir);
 
@@ -208,27 +183,24 @@ export async function runTests(options = {}) {
     }
 
     await browser.close();
-    console.log('Browser closed.');
 
+    // The run-complete block is always the last output of a completed run
     console.log('');
-    console.log(formatTestSummary({ testStatus, durationMs }));
-    const failedBlock = formatFailedTestsBlock({ testStatus, handlers });
-    if (failedBlock) {
-      for (const line of failedBlock.split('\n')) {
-        console.log(line);
-      }
-    }
+    console.log(formatRunComplete({ testStatus, handlers, durationMs }));
 
     return hasFailures;
 
   } catch (error) {
-    console.error('Error running tests:', error);
-    if (isProtocolTimeout(error)) {
-      console.error(
-        '\nThis looks like a Puppeteer protocolTimeout. The whole test suite runs in a single\n' +
-        'page.evaluate call, so the run aborts if it takes longer than "protocolTimeout" (ms).\n' +
-        'Raise it in twd.config.json, e.g. { "protocolTimeout": 600000 } (0 = no timeout).'
-      );
+    const message = error && error.message ? error.message : String(error);
+    console.error(`Error running tests: ${message}`);
+    const diagnostic = explainError(error, config);
+    if (diagnostic) {
+      console.error(`\n${diagnostic}`);
+    } else if (error && error.stack) {
+      console.error(`\n${error.stack}`);
+    }
+    if (error && typeof error === 'object') {
+      error.reported = true;
     }
     if (browser) await browser.close();
     throw error;
