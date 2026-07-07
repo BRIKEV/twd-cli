@@ -30,7 +30,7 @@ The codebase is a small ESM-only Node.js CLI with two core source files:
 3. Navigates to the configured URL (default: `http://localhost:5173`)
 4. Waits for `#twd-sidebar-root` selector (indicates app + TWD are ready)
 5. Calls `window.__testRunner` in the browser context to execute all tests
-6. Reports results via `reportResults()` from `twd-js/runner-ci`
+6. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, and retried tests. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`.
 7. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json`
 8. Returns boolean `hasFailures`
 
@@ -43,4 +43,4 @@ Tests are in `tests/` and use vitest. The test suite mocks `fs` to test config l
 ## Key Dependencies
 
 - **puppeteer** — Browser automation (launches Chrome/Chromium)
-- **twd-js** — The TWD testing framework; provides `reportResults` from `twd-js/runner-ci` and the in-browser `__testRunner`
+- **twd-js** — not a dependency of this package; the user's app bundles it, which provides the in-browser `__testRunner` and `#twd-sidebar-root` this CLI drives
