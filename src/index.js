@@ -88,7 +88,7 @@ export async function runTests(options = {}) {
       selectedIds = ids;
       console.log(`Filtering: running ${ids.length} test(s) matching --test filter(s).`);
     } else {
-      const testCount = registeredHandlers.filter((h) => h.type !== 'suite').length;
+      const testCount = registeredHandlers.filter((h) => h.type === 'test').length;
       console.log(`Running ${testCount} test(s)...`);
     }
 

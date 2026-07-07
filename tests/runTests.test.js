@@ -455,4 +455,21 @@ describe("runTests", () => {
     expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(true);
     errorSpy.mockRestore();
   });
+
+  it("falls back to printing the stack for unrecognized errors", async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    const unknownError = new Error('weird boom');
+    page.goto = vi.fn().mockRejectedValue(unknownError);
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('weird boom');
+
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('Error running tests: weird boom'))).toBe(true);
+    expect(errors.some((e) => e.includes('at '))).toBe(true);
+    expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(false);
+    errorSpy.mockRestore();
+  });
 });

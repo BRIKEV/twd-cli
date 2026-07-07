@@ -95,7 +95,7 @@ Messages interpolate the *actual* config values (url, timeout), not defaults.
 
 | # | Failure mode | Detection | Message (cause + remediation) |
 |---|---|---|---|
-| 1 | Dev server unreachable | `net::ERR_CONNECTION_REFUSED`, `ERR_NAME_NOT_RESOLVED`, `ERR_ADDRESS_UNREACHABLE` from `page.goto` | `Could not reach <url> — connection refused.` / `Is your dev server running? Start it (e.g. \`npm run dev\`) or fix "url" in twd.config.json.` |
+| 1 | Dev server unreachable | `net::ERR_CONNECTION_REFUSED`, `ERR_NAME_NOT_RESOLVED`, `ERR_ADDRESS_UNREACHABLE` from `page.goto` | `Could not reach <url> (<ERR_CODE>).` / `Is your dev server running? Start it (e.g. \`npm run dev\`) or fix "url" in twd.config.json.` |
 | 2 | TWD sidebar never mounts | `TimeoutError` from `waitForSelector('#twd-sidebar-root')` | `Page loaded but the TWD sidebar (#twd-sidebar-root) did not appear within <timeout>ms.` / `Ensure twd-js is initialized in your app and your tests are registered.` / `If the app is slow to start, raise "timeout" in twd.config.json.` |
 | 3 | Protocol timeout | existing `isProtocolTimeout()` check (moves into this module) | existing message, unchanged |
 | 4 | Browser launch failure | `puppeteer.launch` errors matching `Could not find Chrome` or `Failed to launch the browser process` | `Puppeteer could not launch Chrome.` / `Run \`npx puppeteer browsers install chrome\`, or adjust "puppeteerArgs" in twd.config.json.` |
