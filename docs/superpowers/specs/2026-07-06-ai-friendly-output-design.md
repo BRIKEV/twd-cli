@@ -109,7 +109,7 @@ Messages interpolate the *actual* config values (url, timeout), not defaults.
 
 | File | Change |
 |---|---|
-| `src/testSummary.js` | Rewritten: `formatTestSummary` + `formatFailedTestsBlock` replaced by one `formatRunComplete({ testStatus, handlers, durationMs, retriedTests })` returning the full block as a string. Imports `buildTestPath`. `formatDuration.js` stays. |
+| `src/testSummary.js` | Rewritten: `formatTestSummary` + `formatFailedTestsBlock` replaced by one `formatRunComplete({ testStatus, handlers, durationMs })` returning the full block as a string. Imports `buildTestPath`. Duration is formatted relay-style (`(durationMs / 1000).toFixed(1)`s), so `formatDuration.js` and its test are deleted (nothing else uses them). |
 | `src/diagnostics.js` | New: `explainError(error, config)`; absorbs `isProtocolTimeout()` from `index.js`. |
 | `src/index.js` | Slimmed: drops config dump/chatter and the `reportResults` call, computes test count for the `Running N test(s)...` line from handlers it already queries, calls `formatRunComplete`, uses `explainError` in the catch. |
 | `bin/twd-cli.js` | Prints `error.message` before `process.exit(1)`. |
