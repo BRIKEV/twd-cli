@@ -1,3 +1,10 @@
+## <small>1.3.0 (2026-07-08)</small>
+
+* feat: AI-friendly run output and actionable error diagnostics (#10) ([0fc410a](https://github.com/BRIKEV/twd-cli/commit/0fc410a)), closes [#10](https://github.com/BRIKEV/twd-cli/issues/10)
+* BREAKING (output only): the `Tests: N passed…` line and per-test tree are gone — update log-parsers; exit codes unchanged
+* chore: drop `twd-js` dependency (no longer used)
+* ci: publish GitHub prereleases under the npm `beta` dist-tag
+
 ## <small>1.2.0 (2026-06-26)</small>
 
 * feat: add --test filter flag for targeted test runs (#9) ([795e76e](https://github.com/BRIKEV/twd-cli/commit/795e76e)), closes [#9](https://github.com/BRIKEV/twd-cli/issues/9)
