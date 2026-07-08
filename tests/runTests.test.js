@@ -3,9 +3,6 @@ import { runTests } from "../src/index.js";
 
 vi.mock('fs');
 vi.mock('puppeteer');
-vi.mock('twd-js/runner-ci', () => ({
-  reportResults: vi.fn(),
-}));
 vi.mock('../src/config.js', () => ({
   loadConfig: vi.fn(),
 }));
@@ -19,7 +16,6 @@ vi.mock('../src/contractReport.js', () => ({
 
 import fs from 'fs';
 import puppeteer from 'puppeteer';
-import { reportResults } from 'twd-js/runner-ci';
 import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
@@ -28,7 +24,9 @@ function createMockPage(evaluateResult) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
-    evaluate: vi.fn().mockResolvedValue(evaluateResult),
+    evaluate: vi.fn()
+      .mockResolvedValueOnce(evaluateResult.handlers ?? []) // enumeration pass
+      .mockResolvedValue(evaluateResult),                   // run pass (+ coverage)
     exposeFunction: vi.fn(),
   };
 }
@@ -116,7 +114,7 @@ describe("runTests", () => {
     errorSpy.mockRestore();
   });
 
-  it("should log retry summary when tests were retried", async () => {
+  it("should include retried tests in the run-complete block", async () => {
     const testStatus = [
       { id: '1', status: 'pass', retryAttempt: 2 },
       { id: '2', status: 'pass' },
@@ -131,13 +129,14 @@ describe("runTests", () => {
 
     await runTests();
 
-    const logs = consoleSpy.mock.calls.map(c => c[0]);
-    expect(logs).toContain('\n⟳ Retried tests:');
-    expect(logs.some(l => l.includes('flaky test') && l.includes('attempt 2'))).toBe(true);
-    expect(logs.some(l => l.includes('1 test(s) required retries'))).toBe(true);
+    const logs = consoleSpy.mock.calls.map(c => String(c[0]));
+    const block = logs.find(l => l.startsWith('--- Run complete ---'));
+    expect(block).toBeDefined();
+    expect(block).toContain('Retried (1):');
+    expect(block).toContain('✓ flaky test (passed on attempt 2)');
   });
 
-  it("should not log retry summary when no tests were retried", async () => {
+  it("should not include a retried section when no tests were retried", async () => {
     const testStatus = [{ id: '1', status: 'pass' }];
     const handlers = [{ id: '1', name: 'test1', type: 'test' }];
     const page = createMockPage({ handlers, testStatus });
@@ -146,8 +145,10 @@ describe("runTests", () => {
 
     await runTests();
 
-    const logs = consoleSpy.mock.calls.map(c => c[0]);
-    expect(logs).not.toContain('\n⟳ Retried tests:');
+    const logs = consoleSpy.mock.calls.map(c => String(c[0]));
+    const block = logs.find(l => l.startsWith('--- Run complete ---'));
+    expect(block).toBeDefined();
+    expect(block).not.toContain('Retried');
   });
 
   it("should return true when tests have failures", async () => {
@@ -233,25 +234,27 @@ describe("runTests", () => {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
-      // Drive the registered __twdCollectMock callback from inside page.evaluate,
-      // mirroring how a real browser test would trigger it.
-      evaluate: vi.fn().mockImplementation(async () => {
-        const exposed = page.exposeFunction.mock.calls.find(
-          (c) => c[0] === '__twdCollectMock'
-        );
-        expect(exposed).toBeDefined();
-        const collectMock = exposed[1];
-        await collectMock({
-          alias: 'getPhoto',
-          url: '/v1/photo',
-          method: 'GET',
-          status: 200,
-          response: 'bin',
-          testId: 't-1',
-          responseHeaders: { 'Content-Type': 'image/png' },
-        });
-        return { handlers, testStatus };
-      }),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers) // enumeration pass
+        // Drive the registered __twdCollectMock callback from inside page.evaluate,
+        // mirroring how a real browser test would trigger it.
+        .mockImplementation(async () => {
+          const exposed = page.exposeFunction.mock.calls.find(
+            (c) => c[0] === '__twdCollectMock'
+          );
+          expect(exposed).toBeDefined();
+          const collectMock = exposed[1];
+          await collectMock({
+            alias: 'getPhoto',
+            url: '/v1/photo',
+            method: 'GET',
+            status: 200,
+            response: 'bin',
+            testId: 't-1',
+            responseHeaders: { 'Content-Type': 'image/png' },
+          });
+          return { handlers, testStatus };
+        }),
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -394,16 +397,17 @@ describe("runTests", () => {
     expect(fs.writeFileSync).not.toHaveBeenCalled();
   });
 
-  it("should print the Tests: summary line and Failed tests block", async () => {
+  it("prints the run-complete block last, with failure paths and errors", async () => {
     const testStatus = [
       { id: '1', status: 'pass' },
-      { id: '2', status: 'fail', error: 'boom' },
+      { id: '2', status: 'fail', error: 'boom (at http://localhost:5173/form)' },
       { id: '3', status: 'skip' },
     ];
     const handlers = [
-      { id: '1', name: 'should render', type: 'test' },
-      { id: '2', name: 'should submit form', type: 'test' },
-      { id: '3', name: 'should show error', type: 'test' },
+      { id: 's1', name: 'Form', type: 'suite' },
+      { id: '1', name: 'should render', parent: 's1', type: 'test' },
+      { id: '2', name: 'should submit form', parent: 's1', type: 'test' },
+      { id: '3', name: 'should show error', parent: 's1', type: 'test' },
     ];
     const page = createMockPage({ handlers, testStatus });
     const browser = createMockBrowser(page);
@@ -411,15 +415,61 @@ describe("runTests", () => {
 
     await runTests();
 
-    const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
-    const logs = consoleSpy.mock.calls.map((c) => stripAnsi(String(c[0])));
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    const block = logs[logs.length - 1];
+    expect(block.startsWith('--- Run complete ---')).toBe(true);
+    expect(block).toContain('Passed: 1 | Failed: 1 | Skipped: 1');
+    expect(block).toContain('× Form > should submit form');
+    expect(block).toContain('boom (at http://localhost:5173/form)');
+  });
 
-    const summaryLine = logs.find((l) => l.startsWith('Tests:'));
-    expect(summaryLine).toBeDefined();
-    expect(summaryLine).toMatch(/^Tests: 1 passed, 1 failed, 1 skipped \(3 total\) in \d+:\d{2}\.\d{3}$/);
+  it("prints no config dump and no per-test tree chatter", async () => {
+    const testStatus = [{ id: '1', status: 'pass' }];
+    const handlers = [{ id: '1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus });
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
 
-    const failedHeader = logs.find((l) => l === 'Failed tests:');
-    expect(failedHeader).toBeDefined();
-    expect(logs.some((l) => l.includes('should submit form'))).toBe(true);
+    await runTests();
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Configuration:'))).toBe(false);
+    expect(logs.some((l) => l.startsWith('Starting TWD test runner'))).toBe(false);
+    expect(logs.some((l) => l.startsWith('Tests to report'))).toBe(false);
+    expect(logs.some((l) => l.startsWith('Browser closed'))).toBe(false);
+    expect(logs.some((l) => l === 'Running 1 test(s)...')).toBe(true);
+  });
+
+  it("marks rethrown errors as reported", async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    const bootError = new Error('net::ERR_CONNECTION_REFUSED at http://localhost:5173');
+    page.goto = vi.fn().mockRejectedValue(bootError);
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('ERR_CONNECTION_REFUSED');
+
+    expect(bootError.reported).toBe(true);
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to printing the stack for unrecognized errors", async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    const unknownError = new Error('weird boom');
+    page.goto = vi.fn().mockRejectedValue(unknownError);
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('weird boom');
+
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('Error running tests: weird boom'))).toBe(true);
+    expect(errors.some((e) => e.includes('at '))).toBe(true);
+    expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(false);
+    errorSpy.mockRestore();
   });
 });

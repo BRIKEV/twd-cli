@@ -1,32 +1,37 @@
-import { formatDuration } from './formatDuration.js';
+import { buildTestPath } from './buildTestPath.js';
 
-const green = (s) => `\x1b[32m${s}\x1b[0m`;
-const red = (s) => `\x1b[31m${s}\x1b[0m`;
-const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
-
-export function formatTestSummary({ testStatus, durationMs }) {
+export function formatRunComplete({ testStatus, handlers, durationMs }) {
   const passed = testStatus.filter((t) => t.status === 'pass').length;
   const failed = testStatus.filter((t) => t.status === 'fail').length;
   const skipped = testStatus.filter((t) => t.status === 'skip').length;
-  const total = testStatus.length;
+  const duration = (durationMs / 1000).toFixed(1);
 
-  const passedStr = `${green(passed)} passed`;
-  const failedStr = `${failed > 0 ? red(failed) : '0'} failed`;
-  const skippedStr = `${skipped > 0 ? yellow(skipped) : '0'} skipped`;
+  const lines = [
+    '--- Run complete ---',
+    `  Passed: ${passed} | Failed: ${failed} | Skipped: ${skipped}`,
+    `  Duration: ${duration}s`,
+  ];
 
-  return `Tests: ${passedStr}, ${failedStr}, ${skippedStr} (${total} total) in ${formatDuration(durationMs)}`;
-}
-
-export function formatFailedTestsBlock({ testStatus, handlers }) {
   const failures = testStatus.filter((t) => t.status === 'fail');
-  if (failures.length === 0) return null;
-
-  const handlersById = new Map(handlers.map((h) => [h.id, h]));
-  const lines = ['Failed tests:'];
-  for (const failure of failures) {
-    const handler = handlersById.get(failure.id);
-    const name = handler ? handler.name : failure.id;
-    lines.push(`  ${red('✗')} ${name}`);
+  if (failures.length > 0) {
+    lines.push('', `  Failed tests (${failures.length}):`);
+    for (const failure of failures) {
+      const testPath = buildTestPath(failure.id, handlers) ?? failure.id;
+      lines.push(`    × ${testPath}`);
+      if (failure.error) {
+        lines.push(`      ${String(failure.error).replace(/\n/g, '\n      ')}`);
+      }
+    }
   }
+
+  const retried = testStatus.filter((t) => t.status === 'pass' && t.retryAttempt >= 2);
+  if (retried.length > 0) {
+    lines.push('', `  Retried (${retried.length}):`);
+    for (const t of retried) {
+      const testPath = buildTestPath(t.id, handlers) ?? t.id;
+      lines.push(`    ✓ ${testPath} (passed on attempt ${t.retryAttempt})`);
+    }
+  }
+
   return lines.join('\n');
 }
