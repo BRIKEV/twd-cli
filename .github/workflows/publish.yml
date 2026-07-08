@@ -23,6 +23,7 @@ jobs:
         run: npm ci
 
       - name: Publish to npm
-        run: npm publish --access public
+        # Prereleases go to the "beta" dist-tag so `npm install twd-cli` keeps resolving to the stable release
+        run: npm publish --access public ${{ github.event.release.prerelease && '--tag beta' || '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
