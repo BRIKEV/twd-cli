@@ -42,11 +42,12 @@ export function formatRunComplete({
   }
 
   if (stoppedEarly) {
-    lines.push(
-      '',
-      `⚠ Stopped early: reached the failure limit (maxFailures=${maxFailures}).`,
-      `  ${notRun} test(s) were not run. Fix the failures above, or set "maxFailures": 0 to run all.`
-    );
+    lines.push('', `⚠ Stopped early: reached the failure limit (maxFailures=${maxFailures}).`);
+    if (notRun > 0) {
+      lines.push(`  ${notRun} test(s) were not run. Fix the failures above, or set "maxFailures": 0 to run all.`);
+    } else {
+      lines.push('  Fix the failures above, or set "maxFailures": 0 to run all.');
+    }
   }
 
   return lines.join('\n');

@@ -161,4 +161,20 @@ describe('formatRunComplete', () => {
     expect(block).toContain('5 test(s) were not run');
     expect(block).toContain('"maxFailures": 0');
   });
+
+  it('does not claim "0 test(s) were not run" when nothing was skipped', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'boom' },
+        { id: 't2', status: 'fail', error: 'boom' },
+      ],
+      handlers,
+      durationMs: 1000,
+      notRun: 0,
+      stoppedEarly: true,
+      maxFailures: 2,
+    });
+    expect(block).toContain('Stopped early');
+    expect(block).not.toContain('0 test(s) were not run');
+  });
 });

@@ -32,7 +32,7 @@ The codebase is a small ESM-only Node.js CLI with two core source files:
 5. Enumerates all registered test handlers and computes pre-order execution order
 6. Runs tests in ordered chunks via `runByIds(chunkIds)`, with chunk size controlled by config; accumulates results in Node so the run can stop after `maxFailures` failures and partial results survive a timeout or crash
 7. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, retried tests, and "Not run" count if stopped early. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`.
-8. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json` (skipped on early bail)
+8. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json` (skipped whenever the run has failures, including an early bail)
 9. Returns boolean `hasFailures`
 
 **`test-example-app/`** — A React demo app with TWD tests integrated, used for manual testing/demonstration. Not part of the published package or test suite.

@@ -595,6 +595,33 @@ describe("runTests", () => {
     expect(validateMocks).not.toHaveBeenCalled();
   });
 
+  it("dedupes repeated suite-level skip entries across chunks", async () => {
+    const handlers = [
+      { id: 'sk', name: 'Skipped suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 'sk', type: 'test' },
+      { id: 't2', name: 't2', parent: 'sk', type: 'test' },
+      { id: 't3', name: 't3', parent: 'sk', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                        // enumeration
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }])  // chunk 1 (t1)
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }])  // chunk 2 (t2)
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }]), // chunk 3 (t3)
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+
+    await runTests();
+
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Skipped: 1');
+  });
+
   it("prints partial results when a chunk times out mid-run", async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const handlers = [

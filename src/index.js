@@ -107,6 +107,7 @@ export async function runTests(options = {}) {
     partialStatus = [];
     let executed = 0;
     let stoppedEarly = false;
+    const seenIds = new Set();
 
     for (const ids of chunks) {
       const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
@@ -135,7 +136,11 @@ export async function runTests(options = {}) {
         return testStatus;
       }, config.retryCount, ids);
 
-      partialStatus.push(...chunkStatus);
+      for (const entry of chunkStatus) {
+        if (seenIds.has(entry.id)) continue;
+        seenIds.add(entry.id);
+        partialStatus.push(entry);
+      }
       executed += ids.length;
 
       if (config.maxFailures > 0) {
