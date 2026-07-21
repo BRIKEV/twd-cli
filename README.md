@@ -63,7 +63,9 @@ Create a `twd.config.json` file in your project root:
   "headless": true,
   "puppeteerArgs": ["--no-sandbox", "--disable-setuid-sandbox"],
   "retryCount": 2,
-  "protocolTimeout": 300000
+  "protocolTimeout": 300000,
+  "maxFailures": 10,
+  "chunkSize": 10
 }
 ```
 
@@ -79,9 +81,13 @@ Create a `twd.config.json` file in your project root:
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
 | `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
-| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). The whole suite runs inside one `page.evaluate`, so this bounds the **entire run** — raise it (e.g. `600000`) for slow CI; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
+| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). Tests run in chunks via `runByIds`, so this bounds a **single chunk's browser call** (not the entire run) — raise it (e.g. `600000`) for slow CI or if individual chunks hang; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
+| `maxFailures` | number | `10` | Stop the run once this many tests have failed in total; the CLI prints the results gathered so far and exits non-zero. Set `0` to disable and always run every test |
+| `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+
+**Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
 
 ## How It Works
 

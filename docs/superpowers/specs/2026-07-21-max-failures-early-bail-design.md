@@ -1,7 +1,7 @@
 # Design: Fail-fast early bail + timeout-durable partial results
 
 **Date:** 2026-07-21
-**Status:** Approved (pending spec review)
+**Status:** Implemented
 **Repo:** `twd-cli`
 
 ## Problem
