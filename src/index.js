@@ -15,6 +15,9 @@ export async function runTests(options = {}) {
   const { testFilters = [] } = options;
   let browser;
   let config;
+  let startedAt = null;
+  let partialStatus = [];
+  let partialHandlers = [];
   try {
     config = loadConfig();
     const workingDir = process.cwd();
@@ -48,7 +51,7 @@ export async function runTests(options = {}) {
     }
 
     // Navigate to your development server
-    const startedAt = Date.now();
+    startedAt = Date.now();
     console.log(`Navigating to ${config.url} ...`);
     await page.goto(config.url);
 
@@ -66,6 +69,7 @@ export async function runTests(options = {}) {
         type: h.type,
       }));
     });
+    partialHandlers = registeredHandlers;
 
     // Resolve --test filters to a concrete set of test ids (null = run all)
     let selectedIds = null;
@@ -100,7 +104,7 @@ export async function runTests(options = {}) {
     // Handlers for path-building/summary come from the enumeration so partial
     // results are always printable even if a chunk never returns.
     const handlers = registeredHandlers;
-    const testStatus = [];
+    partialStatus = [];
     let executed = 0;
     let stoppedEarly = false;
 
@@ -131,11 +135,11 @@ export async function runTests(options = {}) {
         return testStatus;
       }, config.retryCount, ids);
 
-      testStatus.push(...chunkStatus);
+      partialStatus.push(...chunkStatus);
       executed += ids.length;
 
       if (config.maxFailures > 0) {
-        const failed = testStatus.filter((t) => t.status === 'fail').length;
+        const failed = partialStatus.filter((t) => t.status === 'fail').length;
         if (failed >= config.maxFailures) {
           stoppedEarly = true;
           break;
@@ -143,6 +147,7 @@ export async function runTests(options = {}) {
       }
     }
 
+    const testStatus = partialStatus;
     const durationMs = Date.now() - startedAt;
     const notRun = baseIds.length - executed;
 
@@ -223,6 +228,16 @@ export async function runTests(options = {}) {
     return hasFailures;
 
   } catch (error) {
+    if (partialStatus.length > 0) {
+      const durationMs = startedAt ? Date.now() - startedAt : 0;
+      console.log('');
+      console.log(formatRunComplete({
+        testStatus: partialStatus,
+        handlers: partialHandlers,
+        durationMs,
+      }));
+      console.log('\nRun interrupted before completion — results above are partial.');
+    }
     const message = error && error.message ? error.message : String(error);
     console.error(`Error running tests: ${message}`);
     const diagnostic = explainError(error, config);

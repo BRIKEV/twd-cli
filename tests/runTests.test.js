@@ -594,4 +594,42 @@ describe("runTests", () => {
     expect(result).toBe(true);
     expect(validateMocks).not.toHaveBeenCalled();
   });
+
+  it("prints partial results when a chunk times out mid-run", async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const timeoutError = new Error('Runtime.callFunctionOn timed out.');
+    timeoutError.name = 'ProtocolError';
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                             // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }])       // chunk 1 ok
+        .mockRejectedValueOnce(timeoutError),                        // chunk 2 hangs
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      chunkSize: 1,
+    });
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    const block = logs.find((l) => l.startsWith('--- Run complete ---'));
+    expect(block).toBeDefined();
+    expect(block).toContain('Passed: 1');
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
+    expect(browser.close).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
