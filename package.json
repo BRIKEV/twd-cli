@@ -31,8 +31,8 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.9",
-    "conventional-changelog": "^8.0.0",
-    "vitest": "^4.1.9"
+    "@vitest/coverage-v8": "^4.1.10",
+    "conventional-changelog": "^8.1.0",
+    "vitest": "^4.1.10"
   }
 }
