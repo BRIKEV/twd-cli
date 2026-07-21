@@ -1,3 +1,10 @@
+## <small>1.3.1 (2026-07-21)</small>
+
+* feat: fail-fast early bail + durable partial results (#12) ([9b963d2](https://github.com/BRIKEV/twd-cli/commit/9b963d2)), closes [#12](https://github.com/BRIKEV/twd-cli/issues/12)
+* feat: `maxFailures` (default `10`) stops the run after that many total failures, prints the results gathered so far, and exits non-zero; set `0` to run every test
+* feat: `chunkSize` (default `10`) — tests run in ordered chunks via `runByIds`, so a `protocolTimeout` or crash mid-run prints completed results instead of discarding the whole run
+* note: `maxFailures` is on by default — runs now stop after 10 total failures; raise it or set `0` to restore run-everything behavior. Exit codes unchanged
+
 ## <small>1.3.0 (2026-07-08)</small>
 
 * feat: AI-friendly run output and actionable error diagnostics (#10) ([0fc410a](https://github.com/BRIKEV/twd-cli/commit/0fc410a)), closes [#10](https://github.com/BRIKEV/twd-cli/issues/10)
