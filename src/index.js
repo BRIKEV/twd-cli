@@ -9,6 +9,7 @@ import { buildTestPath } from './buildTestPath.js';
 import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
+import { orderedTestIds, chunk } from './testOrder.js';
 
 export async function runTests(options = {}) {
   const { testFilters = [] } = options;
@@ -92,36 +93,49 @@ export async function runTests(options = {}) {
       console.log(`Running ${testCount} test(s)...`);
     }
 
-    // Execute all tests
-    const { handlers, testStatus } = await page.evaluate(async (retryCount, selectedIds) => {
-      const TestRunner = window.__testRunner;
-      const testStatus = [];
-      const runner = new TestRunner({
-        onStart: (test) => {
-          test.status = "running";
-        },
-        onPass: (test, retryAttempt) => {
-          test.status = "done";
-          const entry = { id: test.id, status: "pass" };
-          if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
-          testStatus.push(entry);
-        },
-        onFail: (test, err) => {
-          test.status = "done";
-          testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
-        },
-        onSkip: (test) => {
-          test.status = "done";
-          testStatus.push({ id: test.id, status: "skip" });
-        },
-      }, { retryCount });
-      const handlers = selectedIds
-        ? await runner.runByIds(selectedIds)
-        : await runner.runAll();
-      return { handlers: Array.from(handlers.values()), testStatus };
-    }, config.retryCount, selectedIds);
+    // Resolve the ordered id list to run: the filter result, or all tests.
+    const baseIds = selectedIds ?? orderedTestIds(registeredHandlers);
+    const chunks = chunk(baseIds, config.chunkSize);
+
+    // Handlers for path-building/summary come from the enumeration so partial
+    // results are always printable even if a chunk never returns.
+    const handlers = registeredHandlers;
+    const testStatus = [];
+    let executed = 0;
+
+    for (const ids of chunks) {
+      const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
+        const TestRunner = window.__testRunner;
+        const testStatus = [];
+        const runner = new TestRunner({
+          onStart: (test) => {
+            test.status = "running";
+          },
+          onPass: (test, retryAttempt) => {
+            test.status = "done";
+            const entry = { id: test.id, status: "pass" };
+            if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
+            testStatus.push(entry);
+          },
+          onFail: (test, err) => {
+            test.status = "done";
+            testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
+          },
+          onSkip: (test) => {
+            test.status = "done";
+            testStatus.push({ id: test.id, status: "skip" });
+          },
+        }, { retryCount });
+        await runner.runByIds(chunkIds);
+        return testStatus;
+      }, config.retryCount, ids);
+
+      testStatus.push(...chunkStatus);
+      executed += ids.length;
+    }
 
     const durationMs = Date.now() - startedAt;
+    const notRun = baseIds.length - executed;
 
     // Exit with appropriate code
     let hasFailures = testStatus.some(test => test.status === 'fail');

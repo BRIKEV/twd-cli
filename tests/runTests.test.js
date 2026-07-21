@@ -20,13 +20,13 @@ import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
 
-function createMockPage(evaluateResult) {
+function createMockPage({ handlers = [], testStatus = [] } = {}) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
     evaluate: vi.fn()
-      .mockResolvedValueOnce(evaluateResult.handlers ?? []) // enumeration pass
-      .mockResolvedValue(evaluateResult),                   // run pass (+ coverage)
+      .mockResolvedValueOnce(handlers) // enumeration pass returns handler metadata
+      .mockResolvedValue(testStatus),  // each chunk run returns its testStatus array
     exposeFunction: vi.fn(),
   };
 }
@@ -47,6 +47,8 @@ const defaultMockConfig = {
   headless: true,
   puppeteerArgs: [],
   retryCount: 2,
+  maxFailures: 10,
+  chunkSize: 50,
 };
 
 describe("runTests", () => {
@@ -76,7 +78,7 @@ describe("runTests", () => {
     await runTests();
 
     // page.evaluate is called with (fn, retryCount, selectedIds)
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3, null);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3, ['1']);
   });
 
   it("should pass protocolTimeout to puppeteer.launch", async () => {
@@ -253,7 +255,7 @@ describe("runTests", () => {
             testId: 't-1',
             responseHeaders: { 'Content-Type': 'image/png' },
           });
-          return { handlers, testStatus };
+          return testStatus;
         }),
     };
     const browser = createMockBrowser(page);
@@ -281,7 +283,7 @@ describe("runTests", () => {
     expect(entries[0].occurrence).toBe(1);
   });
 
-  it("passes selectedIds=null to the run evaluate when no filter", async () => {
+  it("passes all test ids to the run evaluate when no filter", async () => {
     const testStatus = [{ id: '1', status: 'pass' }];
     const handlers = [{ id: '1', name: 'test1', type: 'test' }];
     const page = createMockPage({ handlers, testStatus });
@@ -290,7 +292,7 @@ describe("runTests", () => {
 
     await runTests();
 
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, null);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['1']);
   });
 
   it("runs only matching tests when a --test filter is given", async () => {
@@ -299,17 +301,13 @@ describe("runTests", () => {
       { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
       { id: 't2', name: 'redirects', parent: 's1', type: 'test' },
     ];
-    const runResult = {
-      handlers: registry,
-      testStatus: [{ id: 't1', status: 'pass' }],
-    };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
-        .mockResolvedValueOnce(registry)   // enumeration pass
-        .mockResolvedValueOnce(runResult), // run pass
+        .mockResolvedValueOnce(registry)                    // enumeration pass
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]), // chunk run pass
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -350,14 +348,13 @@ describe("runTests", () => {
       { id: 's1', name: 'Login', parent: undefined, type: 'suite' },
       { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
     ];
-    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
         .mockResolvedValueOnce(registry)
-        .mockResolvedValueOnce(runResult),
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]),
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -377,14 +374,13 @@ describe("runTests", () => {
     const registry = [
       { id: 't1', name: 'shows error', parent: undefined, type: 'test' },
     ];
-    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
         .mockResolvedValueOnce(registry)
-        .mockResolvedValueOnce(runResult),
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]),
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
