@@ -102,6 +102,7 @@ export async function runTests(options = {}) {
     const handlers = registeredHandlers;
     const testStatus = [];
     let executed = 0;
+    let stoppedEarly = false;
 
     for (const ids of chunks) {
       const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
@@ -132,13 +133,21 @@ export async function runTests(options = {}) {
 
       testStatus.push(...chunkStatus);
       executed += ids.length;
+
+      if (config.maxFailures > 0) {
+        const failed = testStatus.filter((t) => t.status === 'fail').length;
+        if (failed >= config.maxFailures) {
+          stoppedEarly = true;
+          break;
+        }
+      }
     }
 
     const durationMs = Date.now() - startedAt;
     const notRun = baseIds.length - executed;
 
     // Exit with appropriate code
-    let hasFailures = testStatus.some(test => test.status === 'fail');
+    let hasFailures = stoppedEarly || testStatus.some((test) => test.status === 'fail');
 
     // Enrich collected mocks with full test path names
     for (const [, mock] of collectedMocks) {
@@ -147,8 +156,8 @@ export async function runTests(options = {}) {
       }
     }
 
-    // Contract validation
-    if (config.contracts && config.contracts.length > 0) {
+    // Contract validation (skipped on an early stop — the data is partial)
+    if (!stoppedEarly && config.contracts && config.contracts.length > 0) {
       if (collectedMocks.size === 0) {
         console.log('\nNo mocks collected — ensure twd-js supports contract collection');
       }
@@ -169,6 +178,8 @@ export async function runTests(options = {}) {
         fs.writeFileSync(reportPath, markdown);
         console.log(`Contract report written to ${config.contractReportPath}`);
       }
+    } else if (stoppedEarly && config.contracts && config.contracts.length > 0) {
+      console.log('\nSkipping contract validation — run stopped early (partial data).');
     }
 
     // Handle code coverage if enabled (skipped when a --test filter is active)
@@ -200,7 +211,14 @@ export async function runTests(options = {}) {
 
     // The run-complete block is always the last output of a completed run
     console.log('');
-    console.log(formatRunComplete({ testStatus, handlers, durationMs }));
+    console.log(formatRunComplete({
+      testStatus,
+      handlers,
+      durationMs,
+      notRun,
+      stoppedEarly,
+      maxFailures: config.maxFailures,
+    }));
 
     return hasFailures;
 

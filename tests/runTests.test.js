@@ -497,4 +497,101 @@ describe("runTests", () => {
     expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(false);
     errorSpy.mockRestore();
   });
+
+  it("stops early once maxFailures is reached and reports Not run", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+      { id: 't4', name: 't4', parent: 's1', type: 'test' },
+      { id: 't5', name: 't5', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                             // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'fail', error: 'a' }]) // chunk 1
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'b' }]), // chunk 2
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 2,
+      chunkSize: 1,
+    });
+
+    const result = await runTests();
+
+    expect(result).toBe(true);
+    // enumeration + exactly 2 chunks (stopped; did NOT run t3..t5)
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Not run: 3');
+    expect(block).toContain('Stopped early');
+    expect(block).toContain('maxFailures=2');
+  });
+
+  it("runs every chunk when maxFailures is 0 (bail disabled)", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)
+        .mockResolvedValue([{ id: 'x', status: 'fail', error: 'boom' }]),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 0,
+      chunkSize: 1,
+    });
+
+    await runTests();
+
+    // enumeration + 3 chunks; never bailed
+    expect(page.evaluate).toHaveBeenCalledTimes(4);
+  });
+
+  it("skips contract validation when the run stops early", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)
+        .mockResolvedValueOnce([{ id: 't1', status: 'fail', error: 'a' }])
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'b' }]),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 2,
+      chunkSize: 1,
+      contracts: [{ source: './openapi.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+
+    const result = await runTests();
+
+    expect(result).toBe(true);
+    expect(validateMocks).not.toHaveBeenCalled();
+  });
 });
