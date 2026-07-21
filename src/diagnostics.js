@@ -30,9 +30,10 @@ export function explainError(error, config = {}) {
 
   if (isProtocolTimeout(error)) {
     return (
-      'This looks like a Puppeteer protocolTimeout. The whole test suite runs in a single\n' +
-      'page.evaluate call, so the run aborts if it takes longer than "protocolTimeout" (ms).\n' +
-      'Raise it in twd.config.json, e.g. { "protocolTimeout": 600000 } (0 = no timeout).'
+      'A single chunk of tests exceeded Puppeteer\'s protocolTimeout — usually one very\n' +
+      'slow or hanging test. Any results printed above are partial (from chunks that\n' +
+      'finished). Raise "protocolTimeout" in twd.config.json (0 = no timeout), or lower\n' +
+      '"chunkSize" so less work rides on each call.'
     );
   }
 
