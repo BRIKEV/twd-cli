@@ -20,13 +20,13 @@ import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
 
-function createMockPage(evaluateResult) {
+function createMockPage({ handlers = [], testStatus = [] } = {}) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
     evaluate: vi.fn()
-      .mockResolvedValueOnce(evaluateResult.handlers ?? []) // enumeration pass
-      .mockResolvedValue(evaluateResult),                   // run pass (+ coverage)
+      .mockResolvedValueOnce(handlers) // enumeration pass returns handler metadata
+      .mockResolvedValue(testStatus),  // each chunk run returns its testStatus array
     exposeFunction: vi.fn(),
   };
 }
@@ -47,6 +47,8 @@ const defaultMockConfig = {
   headless: true,
   puppeteerArgs: [],
   retryCount: 2,
+  maxFailures: 10,
+  chunkSize: 50,
 };
 
 describe("runTests", () => {
@@ -76,7 +78,7 @@ describe("runTests", () => {
     await runTests();
 
     // page.evaluate is called with (fn, retryCount, selectedIds)
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3, null);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 3, ['1']);
   });
 
   it("should pass protocolTimeout to puppeteer.launch", async () => {
@@ -175,6 +177,35 @@ describe("runTests", () => {
     expect(result).toBe(false);
   });
 
+  it("accumulates results across multiple chunks", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                                   // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }])             // chunk 1
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'boom' }]) // chunk 2
+        .mockResolvedValueOnce([{ id: 't3', status: 'pass' }]),            // chunk 3
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+
+    const result = await runTests();
+
+    expect(result).toBe(true); // one failure across chunks
+    expect(page.evaluate).toHaveBeenCalledTimes(4); // enumeration + 3 chunks
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Passed: 2 | Failed: 1 | Skipped: 0');
+  });
+
   it("should skip contract validation when no contracts configured", async () => {
     const testStatus = [{ id: '1', status: 'pass' }];
     const handlers = [{ id: '1', name: 'test1', type: 'test' }];
@@ -253,7 +284,7 @@ describe("runTests", () => {
             testId: 't-1',
             responseHeaders: { 'Content-Type': 'image/png' },
           });
-          return { handlers, testStatus };
+          return testStatus;
         }),
     };
     const browser = createMockBrowser(page);
@@ -281,7 +312,7 @@ describe("runTests", () => {
     expect(entries[0].occurrence).toBe(1);
   });
 
-  it("passes selectedIds=null to the run evaluate when no filter", async () => {
+  it("passes all test ids to the run evaluate when no filter", async () => {
     const testStatus = [{ id: '1', status: 'pass' }];
     const handlers = [{ id: '1', name: 'test1', type: 'test' }];
     const page = createMockPage({ handlers, testStatus });
@@ -290,7 +321,7 @@ describe("runTests", () => {
 
     await runTests();
 
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, null);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['1']);
   });
 
   it("runs only matching tests when a --test filter is given", async () => {
@@ -299,17 +330,13 @@ describe("runTests", () => {
       { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
       { id: 't2', name: 'redirects', parent: 's1', type: 'test' },
     ];
-    const runResult = {
-      handlers: registry,
-      testStatus: [{ id: 't1', status: 'pass' }],
-    };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
-        .mockResolvedValueOnce(registry)   // enumeration pass
-        .mockResolvedValueOnce(runResult), // run pass
+        .mockResolvedValueOnce(registry)                    // enumeration pass
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]), // chunk run pass
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -350,14 +377,13 @@ describe("runTests", () => {
       { id: 's1', name: 'Login', parent: undefined, type: 'suite' },
       { id: 't1', name: 'shows error', parent: 's1', type: 'test' },
     ];
-    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
         .mockResolvedValueOnce(registry)
-        .mockResolvedValueOnce(runResult),
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]),
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -377,14 +403,13 @@ describe("runTests", () => {
     const registry = [
       { id: 't1', name: 'shows error', parent: undefined, type: 'test' },
     ];
-    const runResult = { handlers: registry, testStatus: [{ id: 't1', status: 'pass' }] };
     const page = {
       goto: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
         .mockResolvedValueOnce(registry)
-        .mockResolvedValueOnce(runResult),
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }]),
     };
     const browser = createMockBrowser(page);
     vi.mocked(puppeteer.launch).mockResolvedValue(browser);
@@ -470,6 +495,168 @@ describe("runTests", () => {
     expect(errors.some((e) => e.includes('Error running tests: weird boom'))).toBe(true);
     expect(errors.some((e) => e.includes('at '))).toBe(true);
     expect(errors.some((e) => e.includes('Is your dev server running?'))).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("stops early once maxFailures is reached and reports Not run", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+      { id: 't4', name: 't4', parent: 's1', type: 'test' },
+      { id: 't5', name: 't5', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                             // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'fail', error: 'a' }]) // chunk 1
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'b' }]), // chunk 2
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 2,
+      chunkSize: 1,
+    });
+
+    const result = await runTests();
+
+    expect(result).toBe(true);
+    // enumeration + exactly 2 chunks (stopped; did NOT run t3..t5)
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Not run: 3');
+    expect(block).toContain('Stopped early');
+    expect(block).toContain('maxFailures=2');
+  });
+
+  it("runs every chunk when maxFailures is 0 (bail disabled)", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)
+        .mockResolvedValue([{ id: 'x', status: 'fail', error: 'boom' }]),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 0,
+      chunkSize: 1,
+    });
+
+    await runTests();
+
+    // enumeration + 3 chunks; never bailed
+    expect(page.evaluate).toHaveBeenCalledTimes(4);
+  });
+
+  it("skips contract validation when the run stops early", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)
+        .mockResolvedValueOnce([{ id: 't1', status: 'fail', error: 'a' }])
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'b' }]),
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 2,
+      chunkSize: 1,
+      contracts: [{ source: './openapi.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+
+    const result = await runTests();
+
+    expect(result).toBe(true);
+    expect(validateMocks).not.toHaveBeenCalled();
+  });
+
+  it("dedupes repeated suite-level skip entries across chunks", async () => {
+    const handlers = [
+      { id: 'sk', name: 'Skipped suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 'sk', type: 'test' },
+      { id: 't2', name: 't2', parent: 'sk', type: 'test' },
+      { id: 't3', name: 't3', parent: 'sk', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                        // enumeration
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }])  // chunk 1 (t1)
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }])  // chunk 2 (t2)
+        .mockResolvedValueOnce([{ id: 'sk', status: 'skip' }]), // chunk 3 (t3)
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+
+    await runTests();
+
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Skipped: 1');
+  });
+
+  it("prints partial results when a chunk times out mid-run", async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const timeoutError = new Error('Runtime.callFunctionOn timed out.');
+    timeoutError.name = 'ProtocolError';
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                             // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }])       // chunk 1 ok
+        .mockRejectedValueOnce(timeoutError),                        // chunk 2 hangs
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      chunkSize: 1,
+    });
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    const block = logs.find((l) => l.startsWith('--- Run complete ---'));
+    expect(block).toBeDefined();
+    expect(block).toContain('Passed: 1');
+    const errors = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
+    expect(browser.close).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 });

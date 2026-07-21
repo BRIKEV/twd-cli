@@ -33,6 +33,8 @@ describe('loadConfig', () => {
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
       protocolTimeout: 300000,
+      maxFailures: 10,
+      chunkSize: 10,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -58,6 +60,8 @@ describe('loadConfig', () => {
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
       protocolTimeout: 300000,
+      maxFailures: 10,
+      chunkSize: 10,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -76,6 +80,8 @@ describe('loadConfig', () => {
       puppeteerArgs: ['--disable-dev-shm-usage'],
       retryCount: 3,
       protocolTimeout: 600000,
+      maxFailures: 5,
+      chunkSize: 20,
     };
 
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -104,6 +110,8 @@ describe('loadConfig', () => {
       puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
       retryCount: 2,
       protocolTimeout: 300000,
+      maxFailures: 10,
+      chunkSize: 10,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),
@@ -149,5 +157,22 @@ describe('loadConfig', () => {
     expect(config.headless).toBe(false);
     expect(config.url).toBe('http://localhost:5173');
     expect(config.timeout).toBe(10000);
+  });
+
+  it('defaults maxFailures to 10 and chunkSize to 10', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    const config = loadConfig();
+    expect(config.maxFailures).toBe(10);
+    expect(config.chunkSize).toBe(10);
+  });
+
+  it('allows user to override maxFailures and chunkSize (0 disables bail)', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ maxFailures: 0, chunkSize: 25 })
+    );
+    const config = loadConfig();
+    expect(config.maxFailures).toBe(0);
+    expect(config.chunkSize).toBe(25);
   });
 });

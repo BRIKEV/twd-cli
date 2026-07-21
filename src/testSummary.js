@@ -1,6 +1,13 @@
 import { buildTestPath } from './buildTestPath.js';
 
-export function formatRunComplete({ testStatus, handlers, durationMs }) {
+export function formatRunComplete({
+  testStatus,
+  handlers,
+  durationMs,
+  notRun = 0,
+  stoppedEarly = false,
+  maxFailures,
+}) {
   const passed = testStatus.filter((t) => t.status === 'pass').length;
   const failed = testStatus.filter((t) => t.status === 'fail').length;
   const skipped = testStatus.filter((t) => t.status === 'skip').length;
@@ -9,8 +16,9 @@ export function formatRunComplete({ testStatus, handlers, durationMs }) {
   const lines = [
     '--- Run complete ---',
     `  Passed: ${passed} | Failed: ${failed} | Skipped: ${skipped}`,
-    `  Duration: ${duration}s`,
   ];
+  if (notRun > 0) lines.push(`  Not run: ${notRun}`);
+  lines.push(`  Duration: ${duration}s`);
 
   const failures = testStatus.filter((t) => t.status === 'fail');
   if (failures.length > 0) {
@@ -30,6 +38,15 @@ export function formatRunComplete({ testStatus, handlers, durationMs }) {
     for (const t of retried) {
       const testPath = buildTestPath(t.id, handlers) ?? t.id;
       lines.push(`    ✓ ${testPath} (passed on attempt ${t.retryAttempt})`);
+    }
+  }
+
+  if (stoppedEarly) {
+    lines.push('', `⚠ Stopped early: reached the failure limit (maxFailures=${maxFailures}).`);
+    if (notRun > 0) {
+      lines.push(`  ${notRun} test(s) were not run. Fix the failures above, or set "maxFailures": 0 to run all.`);
+    } else {
+      lines.push('  Fix the failures above, or set "maxFailures": 0 to run all.');
     }
   }
 

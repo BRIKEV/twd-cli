@@ -9,11 +9,15 @@ import { buildTestPath } from './buildTestPath.js';
 import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
+import { orderedTestIds, chunk } from './testOrder.js';
 
 export async function runTests(options = {}) {
   const { testFilters = [] } = options;
   let browser;
   let config;
+  let startedAt = null;
+  let partialStatus = [];
+  let partialHandlers = [];
   try {
     config = loadConfig();
     const workingDir = process.cwd();
@@ -47,7 +51,7 @@ export async function runTests(options = {}) {
     }
 
     // Navigate to your development server
-    const startedAt = Date.now();
+    startedAt = Date.now();
     console.log(`Navigating to ${config.url} ...`);
     await page.goto(config.url);
 
@@ -65,6 +69,7 @@ export async function runTests(options = {}) {
         type: h.type,
       }));
     });
+    partialHandlers = registeredHandlers;
 
     // Resolve --test filters to a concrete set of test ids (null = run all)
     let selectedIds = null;
@@ -92,39 +97,67 @@ export async function runTests(options = {}) {
       console.log(`Running ${testCount} test(s)...`);
     }
 
-    // Execute all tests
-    const { handlers, testStatus } = await page.evaluate(async (retryCount, selectedIds) => {
-      const TestRunner = window.__testRunner;
-      const testStatus = [];
-      const runner = new TestRunner({
-        onStart: (test) => {
-          test.status = "running";
-        },
-        onPass: (test, retryAttempt) => {
-          test.status = "done";
-          const entry = { id: test.id, status: "pass" };
-          if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
-          testStatus.push(entry);
-        },
-        onFail: (test, err) => {
-          test.status = "done";
-          testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
-        },
-        onSkip: (test) => {
-          test.status = "done";
-          testStatus.push({ id: test.id, status: "skip" });
-        },
-      }, { retryCount });
-      const handlers = selectedIds
-        ? await runner.runByIds(selectedIds)
-        : await runner.runAll();
-      return { handlers: Array.from(handlers.values()), testStatus };
-    }, config.retryCount, selectedIds);
+    // Resolve the ordered id list to run: the filter result, or all tests.
+    const baseIds = selectedIds ?? orderedTestIds(registeredHandlers);
+    const chunks = chunk(baseIds, config.chunkSize);
 
+    // Handlers for path-building/summary come from the enumeration so partial
+    // results are always printable even if a chunk never returns.
+    const handlers = registeredHandlers;
+    partialStatus = [];
+    let executed = 0;
+    let stoppedEarly = false;
+    const seenIds = new Set();
+
+    for (const ids of chunks) {
+      const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
+        const TestRunner = window.__testRunner;
+        const testStatus = [];
+        const runner = new TestRunner({
+          onStart: (test) => {
+            test.status = "running";
+          },
+          onPass: (test, retryAttempt) => {
+            test.status = "done";
+            const entry = { id: test.id, status: "pass" };
+            if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
+            testStatus.push(entry);
+          },
+          onFail: (test, err) => {
+            test.status = "done";
+            testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
+          },
+          onSkip: (test) => {
+            test.status = "done";
+            testStatus.push({ id: test.id, status: "skip" });
+          },
+        }, { retryCount });
+        await runner.runByIds(chunkIds);
+        return testStatus;
+      }, config.retryCount, ids);
+
+      for (const entry of chunkStatus) {
+        if (seenIds.has(entry.id)) continue;
+        seenIds.add(entry.id);
+        partialStatus.push(entry);
+      }
+      executed += ids.length;
+
+      if (config.maxFailures > 0) {
+        const failed = partialStatus.filter((t) => t.status === 'fail').length;
+        if (failed >= config.maxFailures) {
+          stoppedEarly = true;
+          break;
+        }
+      }
+    }
+
+    const testStatus = partialStatus;
     const durationMs = Date.now() - startedAt;
+    const notRun = baseIds.length - executed;
 
     // Exit with appropriate code
-    let hasFailures = testStatus.some(test => test.status === 'fail');
+    let hasFailures = stoppedEarly || testStatus.some((test) => test.status === 'fail');
 
     // Enrich collected mocks with full test path names
     for (const [, mock] of collectedMocks) {
@@ -133,8 +166,8 @@ export async function runTests(options = {}) {
       }
     }
 
-    // Contract validation
-    if (config.contracts && config.contracts.length > 0) {
+    // Contract validation (skipped on an early stop — the data is partial)
+    if (!stoppedEarly && config.contracts && config.contracts.length > 0) {
       if (collectedMocks.size === 0) {
         console.log('\nNo mocks collected — ensure twd-js supports contract collection');
       }
@@ -155,6 +188,8 @@ export async function runTests(options = {}) {
         fs.writeFileSync(reportPath, markdown);
         console.log(`Contract report written to ${config.contractReportPath}`);
       }
+    } else if (stoppedEarly && config.contracts && config.contracts.length > 0) {
+      console.log('\nSkipping contract validation — run stopped early (partial data).');
     }
 
     // Handle code coverage if enabled (skipped when a --test filter is active)
@@ -186,11 +221,28 @@ export async function runTests(options = {}) {
 
     // The run-complete block is always the last output of a completed run
     console.log('');
-    console.log(formatRunComplete({ testStatus, handlers, durationMs }));
+    console.log(formatRunComplete({
+      testStatus,
+      handlers,
+      durationMs,
+      notRun,
+      stoppedEarly,
+      maxFailures: config.maxFailures,
+    }));
 
     return hasFailures;
 
   } catch (error) {
+    if (partialStatus.length > 0) {
+      const durationMs = startedAt ? Date.now() - startedAt : 0;
+      console.log('');
+      console.log(formatRunComplete({
+        testStatus: partialStatus,
+        handlers: partialHandlers,
+        durationMs,
+      }));
+      console.log('\nRun interrupted before completion — results above are partial.');
+    }
     const message = error && error.message ? error.message : String(error);
     console.error(`Error running tests: ${message}`);
     const diagnostic = explainError(error, config);

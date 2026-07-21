@@ -20,19 +20,20 @@ The codebase is a small ESM-only Node.js CLI with two core source files:
 
 **`bin/twd-cli.js`** — CLI entry point. Parses `process.argv` for the `run` command, calls `runTests()`, and exits with code 0 (pass) or 1 (failure).
 
-**`src/config.js`** — `loadConfig()` reads `twd.config.json` from `process.cwd()`, merges it with defaults (url, timeout, coverage, headless, puppeteerArgs, retryCount, protocolTimeout), and returns the merged config. Falls back to defaults if the file is missing or unparseable.
+**`src/config.js`** — `loadConfig()` reads `twd.config.json` from `process.cwd()`, merges it with defaults (url, timeout, coverage, headless, puppeteerArgs, retryCount, protocolTimeout, maxFailures, chunkSize), and returns the merged config. Falls back to defaults if the file is missing or unparseable.
 
-`protocolTimeout` (default `300000`, 5 min) is passed to `puppeteer.launch` and bounds Puppeteer's CDP commands. It matters because the entire suite runs inside a single `page.evaluate` (`Runtime.callFunctionOn`), so Puppeteer's implicit 180000ms ceiling would abort long-but-passing suites with no per-test output. Raise it for slow CI; `0` means no timeout.
+`protocolTimeout` (default `300000`, 5 min) is passed to `puppeteer.launch` and bounds each chunk's CDP call. `maxFailures` (default `10`) stops the run after that many cumulative test failures; set to `0` to disable. `chunkSize` (default `10`) controls how many tests run per browser call.
 
 **`src/index.js`** — `runTests()` is the main orchestrator:
 1. Loads config via `loadConfig()`
 2. Launches Puppeteer with configured headless mode and args
 3. Navigates to the configured URL (default: `http://localhost:5173`)
 4. Waits for `#twd-sidebar-root` selector (indicates app + TWD are ready)
-5. Calls `window.__testRunner` in the browser context to execute all tests
-6. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, and retried tests. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`.
-7. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json`
-8. Returns boolean `hasFailures`
+5. Enumerates all registered test handlers and computes pre-order execution order
+6. Runs tests in ordered chunks via `runByIds(chunkIds)`, with chunk size controlled by config; accumulates results in Node so the run can stop after `maxFailures` failures and partial results survive a timeout or crash
+7. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, retried tests, and "Not run" count if stopped early. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`.
+8. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json` (skipped whenever the run has failures, including an early bail)
+9. Returns boolean `hasFailures`
 
 **`test-example-app/`** — A React demo app with TWD tests integrated, used for manual testing/demonstration. Not part of the published package or test suite.
 

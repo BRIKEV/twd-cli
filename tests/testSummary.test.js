@@ -124,4 +124,57 @@ describe('formatRunComplete', () => {
     });
     expect(/\x1b\[[0-9;]*m/.test(block)).toBe(false);
   });
+
+  it('adds a "Not run" line when notRun > 0', () => {
+    const block = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'pass' }],
+      handlers,
+      durationMs: 1000,
+      notRun: 3,
+    });
+    expect(block).toContain('  Not run: 3');
+  });
+
+  it('omits the "Not run" line when notRun is 0', () => {
+    const block = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'pass' }],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(block).not.toContain('Not run');
+  });
+
+  it('appends an early-stop banner when stoppedEarly is true', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'boom' },
+        { id: 't2', status: 'fail', error: 'boom' },
+      ],
+      handlers,
+      durationMs: 1000,
+      notRun: 5,
+      stoppedEarly: true,
+      maxFailures: 2,
+    });
+    expect(block).toContain('Stopped early');
+    expect(block).toContain('maxFailures=2');
+    expect(block).toContain('5 test(s) were not run');
+    expect(block).toContain('"maxFailures": 0');
+  });
+
+  it('does not claim "0 test(s) were not run" when nothing was skipped', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'boom' },
+        { id: 't2', status: 'fail', error: 'boom' },
+      ],
+      handlers,
+      durationMs: 1000,
+      notRun: 0,
+      stoppedEarly: true,
+      maxFailures: 2,
+    });
+    expect(block).toContain('Stopped early');
+    expect(block).not.toContain('0 test(s) were not run');
+  });
 });

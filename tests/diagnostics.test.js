@@ -46,6 +46,7 @@ describe('explainError', () => {
     const msg = explainError(err, config);
     expect(msg).toContain('protocolTimeout');
     expect(msg).toContain('twd.config.json');
+    expect(msg).toContain('chunkSize');
   });
 
   it('explains a missing Chrome install', () => {

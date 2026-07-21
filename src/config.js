@@ -11,6 +11,8 @@ const DEFAULT_CONFIG = {
   puppeteerArgs: ['--no-sandbox', '--disable-setuid-sandbox'],
   retryCount: 2,
   protocolTimeout: 300000,
+  maxFailures: 10,
+  chunkSize: 10,
 };
 
 export function loadConfig() {
