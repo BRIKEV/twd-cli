@@ -177,6 +177,35 @@ describe("runTests", () => {
     expect(result).toBe(false);
   });
 
+  it("accumulates results across multiple chunks", async () => {
+    const handlers = [
+      { id: 's1', name: 'Suite', type: 'suite' },
+      { id: 't1', name: 't1', parent: 's1', type: 'test' },
+      { id: 't2', name: 't2', parent: 's1', type: 'test' },
+      { id: 't3', name: 't3', parent: 's1', type: 'test' },
+    ];
+    const page = {
+      goto: vi.fn(),
+      waitForSelector: vi.fn(),
+      exposeFunction: vi.fn(),
+      evaluate: vi.fn()
+        .mockResolvedValueOnce(handlers)                                   // enumeration
+        .mockResolvedValueOnce([{ id: 't1', status: 'pass' }])             // chunk 1
+        .mockResolvedValueOnce([{ id: 't2', status: 'fail', error: 'boom' }]) // chunk 2
+        .mockResolvedValueOnce([{ id: 't3', status: 'pass' }]),            // chunk 3
+    };
+    const browser = createMockBrowser(page);
+    vi.mocked(puppeteer.launch).mockResolvedValue(browser);
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+
+    const result = await runTests();
+
+    expect(result).toBe(true); // one failure across chunks
+    expect(page.evaluate).toHaveBeenCalledTimes(4); // enumeration + 3 chunks
+    const block = consoleSpy.mock.calls.map((c) => String(c[0])).at(-1);
+    expect(block).toContain('Passed: 2 | Failed: 1 | Skipped: 0');
+  });
+
   it("should skip contract validation when no contracts configured", async () => {
     const testStatus = [{ id: '1', status: 'pass' }];
     const handlers = [{ id: '1', name: 'test1', type: 'test' }];
