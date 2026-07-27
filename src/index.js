@@ -13,6 +13,29 @@ import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
 import { assertFfmpegAvailable, applyRecordingFraming, startRecording } from './recorder.js';
 
+/**
+ * Size in bytes of the recorded artifact, or null when it cannot be determined.
+ *
+ * A resolved `stop()` is not evidence of a usable file. Puppeteer's frame
+ * pipeline buffers with `bufferCount(2, 1)`, so nothing is written until a
+ * second CDP screencast frame arrives, and Chrome only emits frames on a
+ * compositor update. A suite that never repaints, or a run with no tests at
+ * all, finishes cleanly with a 0-byte file.
+ *
+ * The null case is unreachable against the real `fs`, where `statSync` either
+ * returns a `Stats` or throws. It exists so an auto-mocked `fs` in the test
+ * suite neither crashes here nor invents a bogus warning.
+ */
+function recordedFileSize(absPath) {
+  try {
+    const stats = fs.statSync(absPath);
+    return stats && typeof stats.size === 'number' ? stats.size : null;
+  } catch {
+    // statSync throws ENOENT when the file was never created at all.
+    return 0;
+  }
+}
+
 export async function runTests(options = {}) {
   const { testFilters = [], recordOverrides = {} } = options;
   let browser;
@@ -22,6 +45,7 @@ export async function runTests(options = {}) {
   let partialHandlers = [];
   let recorder = null;
   let recordOutput = null;
+  let recordOutputPath = null;
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
@@ -148,7 +172,8 @@ export async function runTests(options = {}) {
         format: record.format,
       });
       recordOutput = path.join(record.dir, filename);
-      recorder = await startRecording(page, record, path.resolve(workingDir, recordOutput));
+      recordOutputPath = path.resolve(workingDir, recordOutput);
+      recorder = await startRecording(page, record, recordOutputPath);
     }
 
     // Handlers for path-building/summary come from the enumeration so partial
@@ -204,7 +229,18 @@ export async function runTests(options = {}) {
 
     await stopRecorder();
     if (recording) {
-      console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
+      // Report what is on disk, not that stop() resolved. This also covers a
+      // stop() that rejected, which stopRecorder swallows into a warning.
+      if (recordedFileSize(recordOutputPath) === 0) {
+        console.warn(
+          `Warning: recording produced an empty file at ${recordOutput}.`
+        );
+        console.warn(
+          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
+        );
+      } else {
+        console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
+      }
     }
 
     const testStatus = partialStatus;

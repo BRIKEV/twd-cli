@@ -56,6 +56,10 @@ export async function startRecording(page, record, outputPath) {
     format: record.format,
     fps: record.fps,
     overwrite: true,
+    // Puppeteer spawns ffmpeg itself and defaults to a bare `ffmpeg` on PATH.
+    // Without this the pre-flight probe would honor record.ffmpegPath while the
+    // actual encode still failed with ENOENT, after launch and navigation.
+    ffmpegPath: record.ffmpegPath,
   };
 
   // Puppeteer adds a `setpts` filter for any truthy speed, so a speed of 1

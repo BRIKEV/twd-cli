@@ -6,7 +6,11 @@ export const DEFAULT_RECORD = {
   dir: './twd-artifacts',
   filename: null,
   format: 'mp4',
-  viewport: { width: 1280, height: 720, deviceScaleFactor: 2 },
+  // deviceScaleFactor stays at 1 on purpose. Puppeteer measures the recording
+  // dimensions with deviceScaleFactor forced to 0, so a higher factor never
+  // reaches the video, but it is live on the page during the run (srcset picks
+  // 2x assets, dpr-branching code takes another path). All cost, no benefit.
+  viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
   fps: 30,
   speed: 1,
   hideSidebar: true,

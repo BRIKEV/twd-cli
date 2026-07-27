@@ -187,7 +187,7 @@ describe('loadConfig', () => {
       dir: './twd-artifacts',
       filename: null,
       format: 'mp4',
-      viewport: { width: 1280, height: 720, deviceScaleFactor: 2 },
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       fps: 30,
       speed: 1,
       hideSidebar: true,
@@ -211,7 +211,7 @@ describe('loadConfig', () => {
     expect(record.speed).toBe(1);
     expect(record.hideSidebar).toBe(true);
     expect(record.ffmpegPath).toBe('ffmpeg');
-    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 2 });
+    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
   });
 
   it('merges a partial record.viewport instead of replacing it', () => {
@@ -223,7 +223,7 @@ describe('loadConfig', () => {
     expect(loadConfig().record.viewport).toEqual({
       width: 1920,
       height: 720,
-      deviceScaleFactor: 2,
+      deviceScaleFactor: 1,
     });
   });
 

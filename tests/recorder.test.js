@@ -84,8 +84,26 @@ describe("startRecording", () => {
       format: 'mp4',
       fps: 30,
       overwrite: true,
+      ffmpegPath: 'ffmpeg',
     });
     expect(result).toBe(recorder);
+  });
+
+  it("forwards a custom ffmpegPath to the screencast", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    const page = { screencast: vi.fn().mockResolvedValue({ stop: vi.fn() }) };
+
+    await startRecording(
+      page,
+      { ...baseRecord, ffmpegPath: '/opt/homebrew/bin/ffmpeg' },
+      '/abs/out.mp4'
+    );
+
+    // Puppeteer spawns its own ffmpeg, so the probe honoring this path is not
+    // enough: the value has to reach page.screencast() or the encode ENOENTs.
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({ ffmpegPath: '/opt/homebrew/bin/ffmpeg' })
+    );
   });
 
   it("does not create the directory when it already exists", async () => {
