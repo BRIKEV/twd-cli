@@ -74,6 +74,10 @@ if you set that). Re-running overwrites the file.
 
 The TWD sidebar is hidden during recording so the frame is just your app.
 
+Chrome only emits video frames when the page repaints, so a suite that only
+asserts and never changes anything on screen can finish with an empty file. When
+that happens the run says so rather than reporting a video you cannot play.
+
 **A recorded run is a demo artifact, not a substitute for a CI run.** Recording
 sets its own viewport (1280x720 by default, versus the 800x600 a normal run
 uses) and reflows the app to full width, so a recorded run can pass or fail
@@ -130,7 +134,7 @@ All keys live under `record` in `twd.config.json`.
 | `dir` | string | `"./twd-artifacts"` | Directory the video is written to |
 | `filename` | string \| null | `null` | Explicit output filename. When `null`, the name is derived from the recorded tests. A known extension (`.mp4`, `.webm`, `.gif`) is respected, otherwise `format` supplies it |
 | `format` | string | `"mp4"` | `"mp4"`, `"webm"` or `"gif"`. All three are encoded natively, no conversion step |
-| `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 2 }` | Applied only when recording. Video dimensions are viewport times `deviceScaleFactor`, so the scale factor is what makes the clip crisp rather than soft |
+| `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 1 }` | Applied only when recording. `width` and `height` set the video dimensions. `deviceScaleFactor` does **not** change the output resolution (Puppeteer measures the recording in CSS pixels), it only changes the page environment under test: raising it makes `srcset` and `image-set` pick 2x assets and sends dpr-branching code down a different path |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Playback speed, e.g. `0.5` for half speed. This is a **uniform stretch of the whole timeline**, not per-command pacing: it slows the fast parts and the already-slow parts equally and cannot hold on a just-clicked element |
 | `hideSidebar` | boolean | `true` | Hide the TWD sidebar during capture so the frame is just your app |

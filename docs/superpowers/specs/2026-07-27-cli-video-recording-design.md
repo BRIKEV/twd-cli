@@ -123,9 +123,25 @@ twd-cli never calls `setViewport` today, so every run uses Puppeteer's implicit
 canvas for a shareable clip.
 
 Recording sets its own viewport, defaulting to 1280x720 at
-`deviceScaleFactor: 2`. `screencast()` derives video dimensions from viewport
-times `devicePixelRatio`, so the scale factor is what makes the clip crisp rather
-than soft.
+`deviceScaleFactor: 1`. The width and height are what set the video dimensions.
+
+`deviceScaleFactor` deliberately stays at 1, because it does **not** affect the
+output resolution. Puppeteer's `#getNativePixelDimensions()` forces
+`deviceScaleFactor: 0` before measuring the page, so the `ScreenRecorder` is
+always constructed with CSS-pixel dimensions and the emulated factor never
+reaches the encoder. Measured: recording the same page at `deviceScaleFactor: 2`
+and at `1` produced byte-identical files (same md5, same frame count, same
+1280x720 dimensions).
+
+The factor is not inert, though. It is live on the page for the whole run
+(`window.devicePixelRatio === 2`), so raising it changes the environment under
+test: `srcset` and `image-set` select 2x assets, and dpr-branching code takes a
+different path. That adds to the non-determinism described below for zero video
+benefit, which is why the default is 1.
+
+Puppeteer's real output-size knob is the `scale` option on `screencast()`. This
+feature does not expose it. Possible follow-up if users ask for a higher
+resolution clip than the viewport gives.
 
 The viewport is applied **only** when recording, so existing non-recording runs
 keep their current behavior exactly.
@@ -189,7 +205,7 @@ Real per-command pacing needs the deferred twd-js work. Default `1`.
     "dir": "./twd-artifacts",
     "filename": null,
     "format": "mp4",
-    "viewport": { "width": 1280, "height": 720, "deviceScaleFactor": 2 },
+    "viewport": { "width": 1280, "height": 720, "deviceScaleFactor": 1 },
     "fps": 30,
     "speed": 1,
     "hideSidebar": true,
@@ -240,6 +256,25 @@ lines:
 ```
 Recorded 3 test(s) to ./twd-artifacts/run.mp4
 ```
+
+That line is gated on the file actually having bytes, because a resolved
+`stop()` is not evidence of a usable artifact. Puppeteer's frame pipeline uses
+`bufferCount(2, 1)`, so nothing is written until a second CDP screencast frame
+arrives, and Chrome only emits frames on a compositor update. Measured: a 1s
+recording of a static page produced 0 bytes with `stop()` resolving cleanly,
+while the same recording of an animating page produced 17081 bytes. An
+assertion-only suite that never mutates the DOM, and an empty run (`chunk([], n)`
+returns `[]`, so the loop body never executes), both land in that hole.
+
+When the output is missing or empty, the run warns instead:
+
+```
+Warning: recording produced an empty file at ./twd-artifacts/run.mp4.
+Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.
+```
+
+The same check covers a `stop()` that rejected, which is otherwise swallowed
+into a `could not finalize recording` warning.
 
 ## Recording is not deterministic
 
