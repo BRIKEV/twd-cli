@@ -25,7 +25,7 @@ Usage:
   npx twd-cli run --test "<name>"  Run only tests whose "suite > test" path
                                    contains <name> (case-insensitive).
                                    Repeatable; multiple --test values are OR'd.
-  npx twd-cli run --record          Record the run to a video file
+  npx twd-cli run --record         Record the run to a video file
 
 Examples:
   npx twd-cli run --test "shows error"

@@ -69,7 +69,8 @@ declaration order. Note that `--test` matches a substring of the full
 
 The file is named after what is in it: a single recorded test gets a slug of its
 full path (`login-shows-error-on-bad-password.mp4`), and anything else gets
-`run.mp4`. Re-running overwrites the file.
+`run.<ext>`, where `<ext>` comes from `format` (`mp4` by default, or `webm`/`gif`
+if you set that). Re-running overwrites the file.
 
 The TWD sidebar is hidden during recording so the frame is just your app.
 
@@ -348,6 +349,6 @@ Failed validations are included in a collapsible details section with a link to 
 
 - Node.js >= 20.19.x
 - A running development server with TWD tests
-- **ffmpeg**, only for `--record`. Install with `brew install ffmpeg` (macOS),
+- ffmpeg, only for `--record`. Install with `brew install ffmpeg` (macOS),
   `sudo apt-get install ffmpeg` (Linux), or `winget install ffmpeg` (Windows).
   Set `record.ffmpegPath` if it is not on your `PATH`.
