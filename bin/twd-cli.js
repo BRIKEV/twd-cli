@@ -7,8 +7,8 @@ const command = process.argv[2];
 
 if (command === 'run') {
   try {
-    const { testFilters } = parseRunArgs(process.argv.slice(3));
-    const hasFailures = await runTests({ testFilters });
+    const { testFilters, record } = parseRunArgs(process.argv.slice(3));
+    const hasFailures = await runTests({ testFilters, recordOverrides: record });
     process.exit(hasFailures ? 1 : 0);
   } catch (error) {
     if (!error?.reported) {

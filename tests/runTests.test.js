@@ -13,6 +13,10 @@ vi.mock('../src/contracts.js', () => ({
 vi.mock('../src/contractReport.js', () => ({
   printContractReport: vi.fn(),
 }));
+vi.mock('../src/recorder.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, assertFfmpegAvailable: vi.fn() };
+});
 
 import fs from 'fs';
 import puppeteer from 'puppeteer';
@@ -20,7 +24,7 @@ import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
 
-function createMockPage({ handlers = [], testStatus = [] } = {}) {
+function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
@@ -28,6 +32,9 @@ function createMockPage({ handlers = [], testStatus = [] } = {}) {
       .mockResolvedValueOnce(handlers) // enumeration pass returns handler metadata
       .mockResolvedValue(testStatus),  // each chunk run returns its testStatus array
     exposeFunction: vi.fn(),
+    setViewport: vi.fn(),
+    addStyleTag: vi.fn(),
+    screencast: vi.fn().mockResolvedValue(recorder ?? { stop: vi.fn() }),
   };
 }
 
@@ -658,5 +665,133 @@ describe("runTests", () => {
     expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
     expect(browser.close).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe("runTests recording", () => {
+  const recordConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 2 },
+    fps: 30,
+    speed: 1,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  let consoleSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not touch any recording API when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).not.toHaveBeenCalled();
+    expect(page.addStyleTag).not.toHaveBeenCalled();
+    expect(page.screencast).not.toHaveBeenCalled();
+  });
+
+  it("sets the viewport, injects framing and starts the screencast when enabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [
+        { id: 's', name: 'Login', type: 'suite', children: ['1'] },
+        { id: '1', name: 'shows error', type: 'test', parent: 's' },
+      ],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).toHaveBeenCalledWith(recordConfig.viewport);
+    expect(page.addStyleTag).toHaveBeenCalled();
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringContaining('login-shows-error.mp4'),
+        format: 'mp4',
+        overwrite: true,
+      })
+    );
+  });
+
+  it("stops the recorder before closing the browser", async () => {
+    const order = [];
+    const recorder = { stop: vi.fn(() => { order.push('stop'); }) };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+      recorder,
+    });
+    const browser = createMockBrowser(page);
+    browser.close = vi.fn(() => { order.push('close'); });
+    puppeteer.launch.mockResolvedValue(browser);
+
+    await runTests();
+
+    expect(order).toEqual(['stop', 'close']);
+  });
+
+  it("still stops the recorder when a chunk throws", async () => {
+    const recorder = { stop: vi.fn() };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      recorder,
+    });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce([{ id: '1', name: 'test1', type: 'test' }])
+      .mockRejectedValue(new Error('boom'));
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('boom');
+
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts a recorder when no test matches the filter", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runTests({ testFilters: ['nothing matches this'] });
+
+    expect(page.screencast).not.toHaveBeenCalled();
+  });
+
+  it("applies CLI record overrides over the config file", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: { ...recordConfig, enabled: false } });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ recordOverrides: { enabled: true, dir: './clips' } });
+
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining('clips') })
+    );
   });
 });

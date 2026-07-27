@@ -10,17 +10,42 @@ import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
+import { resolveRecordFilename } from './recordFilename.js';
+import { assertFfmpegAvailable, applyRecordingFraming, startRecording } from './recorder.js';
 
 export async function runTests(options = {}) {
-  const { testFilters = [] } = options;
+  const { testFilters = [], recordOverrides = {} } = options;
   let browser;
   let config;
   let startedAt = null;
   let partialStatus = [];
   let partialHandlers = [];
+  let recorder = null;
+  let recordOutput = null;
+
+  // Stops the screencast at most once. Must always run before browser.close():
+  // if the browser goes first, ffmpeg is orphaned and the file is truncated.
+  const stopRecorder = async () => {
+    if (!recorder) return;
+    const active = recorder;
+    recorder = null;
+    try {
+      await active.stop();
+    } catch (err) {
+      console.warn(`Warning: could not finalize recording: ${err.message}`);
+    }
+  };
+
   try {
     config = loadConfig();
     const workingDir = process.cwd();
+    // config.record can be a shared default object; copy instead of mutating it.
+    const record = { ...(config.record || {}), ...recordOverrides };
+    const recording = Boolean(record.enabled);
+
+    if (recording) {
+      assertFfmpegAvailable(record.ffmpegPath);
+    }
 
     // Load contract validators if configured
     let contractValidators = [];
@@ -35,6 +60,10 @@ export async function runTests(options = {}) {
     });
 
     const page = await browser.newPage();
+
+    if (recording) {
+      await page.setViewport(record.viewport);
+    }
 
     // Register mock collector for contract validation
     const collectedMocks = new Map();
@@ -57,6 +86,10 @@ export async function runTests(options = {}) {
 
     // Wait for the selector to be available
     await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
+
+    if (recording) {
+      await applyRecordingFraming(page, record);
+    }
 
     // Enumerate registered handlers (for the count line and --test filtering)
     const registeredHandlers = await page.evaluate(() => {
@@ -100,6 +133,23 @@ export async function runTests(options = {}) {
     // Resolve the ordered id list to run: the filter result, or all tests.
     const baseIds = selectedIds ?? orderedTestIds(registeredHandlers);
     const chunks = chunk(baseIds, config.chunkSize);
+
+    // Recording starts here, not earlier: the output path is fixed up front by
+    // page.screencast(), and the filename depends on which tests survived the
+    // filter. Starting after baseIds is resolved also means the "no tests
+    // matched" early return can never leave a recorder running.
+    if (recording) {
+      const testNames = baseIds
+        .map((id) => buildTestPath(id, registeredHandlers))
+        .filter(Boolean);
+      const filename = resolveRecordFilename({
+        testNames,
+        filename: record.filename,
+        format: record.format,
+      });
+      recordOutput = path.join(record.dir, filename);
+      recorder = await startRecording(page, record, path.resolve(workingDir, recordOutput));
+    }
 
     // Handlers for path-building/summary come from the enumeration so partial
     // results are always printable even if a chunk never returns.
@@ -150,6 +200,11 @@ export async function runTests(options = {}) {
           break;
         }
       }
+    }
+
+    await stopRecorder();
+    if (recording) {
+      console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
     }
 
     const testStatus = partialStatus;
@@ -254,6 +309,7 @@ export async function runTests(options = {}) {
     if (error && typeof error === 'object') {
       error.reported = true;
     }
+    await stopRecorder();
     if (browser) await browser.close();
     throw error;
   }
