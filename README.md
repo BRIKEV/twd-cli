@@ -49,6 +49,35 @@ Notes:
 - Code coverage collection is skipped while a `--test` filter is active, since a
   filtered run is a partial (debug) run.
 
+### Recording a run
+
+Record a test run to a video file, for a PR attachment, a docs clip, or a demo:
+
+```bash
+# Record one flow
+npx twd-cli run --record --test "checkout flow"
+
+# Record at half speed, into a custom directory
+npx twd-cli run --record --record-speed 0.5 --record-dir ./clips
+```
+
+Requires ffmpeg. See [Requirements](#requirements).
+
+The run produces a single video containing every matched test, back to back, in
+declaration order. Note that `--test` matches a substring of the full
+`"suite > test"` path, so one filter can match several tests.
+
+The file is named after what is in it: a single recorded test gets a slug of its
+full path (`login-shows-error-on-bad-password.mp4`), and anything else gets
+`run.mp4`. Re-running overwrites the file.
+
+The TWD sidebar is hidden during recording so the frame is just your app.
+
+**A recorded run is a demo artifact, not a substitute for a CI run.** Recording
+sets its own viewport (1280x720 by default, versus the 800x600 a normal run
+uses) and reflows the app to full width, so a recorded run can pass or fail
+differently. Run CI normally and record separately.
+
 ### Configuration
 
 Create a `twd.config.json` file in your project root:
@@ -86,8 +115,25 @@ Create a `twd.config.json` file in your project root:
 | `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+| `record` | object | see below | Video recording settings (see [Recording a run](#recording-a-run)) |
 
 **Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
+
+#### Recording Options
+
+All keys live under `record` in `twd.config.json`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Turn recording on. Equivalent to passing `--record` |
+| `dir` | string | `"./twd-artifacts"` | Directory the video is written to |
+| `filename` | string \| null | `null` | Explicit output filename. When `null`, the name is derived from the recorded tests. A known extension (`.mp4`, `.webm`, `.gif`) is respected, otherwise `format` supplies it |
+| `format` | string | `"mp4"` | `"mp4"`, `"webm"` or `"gif"`. All three are encoded natively, no conversion step |
+| `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 2 }` | Applied only when recording. Video dimensions are viewport times `deviceScaleFactor`, so the scale factor is what makes the clip crisp rather than soft |
+| `fps` | number | `30` | Capture frame rate |
+| `speed` | number | `1` | Playback speed, e.g. `0.5` for half speed. This is a **uniform stretch of the whole timeline**, not per-command pacing: it slows the fast parts and the already-slow parts equally and cannot hold on a just-clicked element |
+| `hideSidebar` | boolean | `true` | Hide the TWD sidebar during capture so the frame is just your app |
+| `ffmpegPath` | string | `"ffmpeg"` | Path to the ffmpeg binary if it is not on your `PATH` |
 
 ## How It Works
 
@@ -302,3 +348,6 @@ Failed validations are included in a collapsible details section with a link to 
 
 - Node.js >= 20.19.x
 - A running development server with TWD tests
+- **ffmpeg**, only for `--record`. Install with `brew install ffmpeg` (macOS),
+  `sudo apt-get install ffmpeg` (Linux), or `winget install ffmpeg` (Windows).
+  Set `record.ffmpegPath` if it is not on your `PATH`.
