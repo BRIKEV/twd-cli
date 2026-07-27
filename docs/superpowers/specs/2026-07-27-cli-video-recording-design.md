@@ -63,14 +63,26 @@ Ordered against the existing `runTests` flow in `src/index.js`:
 
 1. Probe ffmpeg (recording only). Fail fast if absent.
 2. `puppeteer.launch()`
-3. `page.setViewport(record.viewport)` (recording only)
-4. `page.goto(config.url)`
-5. `page.waitForSelector('#twd-sidebar-root')`
-6. `page.addStyleTag(...)` for framing (recording only)
-7. `const recorder = await page.screencast({...})`
-8. Enumerate handlers, resolve filters, run chunks (unchanged)
-9. `await recorder.stop()`
-10. `await browser.close()`
+3. `browser.newPage()`
+4. `page.setViewport(record.viewport)` (recording only)
+5. `page.goto(config.url)`
+6. `page.waitForSelector('#twd-sidebar-root')`
+7. `page.addStyleTag(...)` for framing (recording only)
+8. Enumerate handlers
+9. Resolve `--test` filters into `baseIds`
+10. Compute filename, create `record.dir`, `page.screencast()` (recording only)
+11. Run chunks
+12. `await recorder.stop()`
+13. Coverage and contract handling (unchanged)
+14. `await browser.close()`
+
+Recording starts at step 10, not before enumeration, because `screencast()` needs
+the output path up front and the filename depends on how many tests will run.
+That count only exists once `baseIds` is resolved.
+
+Two things fall out of this for free. The clip begins at the first test rather
+than capturing page load and handler enumeration, and the "no tests matched"
+early return at `src/index.js:83` can never leave a recorder running.
 
 ### Teardown is the main correctness risk
 
@@ -190,11 +202,14 @@ Real per-command pacing needs the deferred twd-js work. Default `1`.
 
 `loadConfig` in `src/config.js` does `{ ...DEFAULT_CONFIG, ...userConfig }`. With
 a nested `record` object, a user setting only `{"record": {"format": "webm"}}`
-would **wipe every other record default** rather than merging. `loadConfig` needs
-a one-level merge for this key. Every other config key stays flat and unchanged.
+would **wipe every other record default** rather than merging.
+
+The merge has to go two levels deep, not one, because `record.viewport` is itself
+nested: `{"record": {"viewport": {"width": 1920}}}` must keep the default `height`
+and `deviceScaleFactor`. Every other config key stays flat and unchanged.
 
 This is the first nested key in the config, so the merge behavior needs a test
-that pins it.
+that pins it at both levels.
 
 ### CLI flags
 
