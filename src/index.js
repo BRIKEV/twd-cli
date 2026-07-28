@@ -180,6 +180,28 @@ export async function runTests(options = {}) {
       recordOutput = path.join(record.dir, filename);
       recordOutputPath = path.resolve(workingDir, recordOutput);
       recorder = await startRecording(page, record, recordOutputPath);
+
+      if (record.pace) {
+        // twd-js spaces out its own command loop, so frames are captured at
+        // full rate rather than the video being stretched afterwards.
+        // Returns null when the installed twd-js predates the pacing hook, so
+        // an older version degrades to an unpaced recording instead of
+        // crashing the run with a bare TypeError.
+        const applied = await page.evaluate((ms) => {
+          if (typeof window.__twdSetPace !== 'function') return null;
+          return window.__twdSetPace(ms);
+        }, record.pace);
+
+        if (applied === null) {
+          console.warn(
+            'Warning: --record-pace needs a newer twd-js (no pacing hook found). Recording unpaced.'
+          );
+        } else if (applied !== record.pace) {
+          // twd-js clamps, so report what actually took effect.
+          console.warn(`Warning: pace clamped to ${applied}ms (requested ${record.pace}ms).`);
+        }
+      }
+
       await holdOpeningFrame(record.preRoll);
     }
 

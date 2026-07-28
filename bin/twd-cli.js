@@ -36,9 +36,10 @@ Options:
   --record               Record the run to a video file (requires ffmpeg)
   --record-dir <path>    Output directory (default ./twd-artifacts)
   --record-speed <n>     Playback speed, e.g. 0.5 for half speed
+  --record-pace <ms>     Slow the run itself, e.g. 500. Keeps full frame rate
 
-  --record-dir and --record-speed only set values. Recording still has to be
-  turned on with --record or "record": { "enabled": true } in twd.config.json.
+  These three only set values. Recording still has to be turned on with
+  --record or "record": { "enabled": true } in twd.config.json.
 
   Create a twd.config.json file in your project root to customize settings.
   `);

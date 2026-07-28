@@ -1070,3 +1070,116 @@ describe("runTests pre-roll and post-roll", () => {
     expect(holdFinalFrame).not.toHaveBeenCalled();
   });
 });
+
+describe("runTests pacing", () => {
+  const paceConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    pace: 500,
+    preRoll: 0,
+    postRoll: 500,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // An earlier describe's restoreAllMocks puts these back to their real
+    // implementations, so neuter them again.
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(holdOpeningFrame).mockReset();
+    vi.mocked(holdFinalFrame).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function pacedPage(applied = 500) {
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    // Enumeration, then the setPace evaluate, then the chunk.
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce([{ id: '1', name: 'test1', type: 'test' }])
+      .mockResolvedValueOnce(applied)
+      .mockResolvedValue([{ id: '1', status: 'pass' }]);
+    return page;
+  }
+
+  it("sets the pace in the page when recording with a pace", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: paceConfig });
+    const page = pacedPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 500);
+  });
+
+  it("does not set a pace when record.pace is 0", async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: { ...paceConfig, pace: 0 },
+    });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.evaluate).not.toHaveBeenCalledWith(expect.any(Function), 0);
+  });
+
+  it("does not set a pace when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.evaluate).not.toHaveBeenCalledWith(expect.any(Function), 500);
+  });
+
+  it("warns when twd-js clamps the requested pace", async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: { ...paceConfig, pace: 99999 },
+    });
+    const page = pacedPage(5000);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('5000'));
+  });
+
+  it("degrades to an unpaced recording when twd-js has no pacing hook", async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: paceConfig });
+    // An older twd-js: the in-page function returns null rather than a number.
+    const page = pacedPage(null);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    const hasFailures = await runTests();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('newer twd-js'));
+    // The run still completes and still records; only the pacing is lost.
+    expect(hasFailures).toBe(false);
+  });
+
+});
