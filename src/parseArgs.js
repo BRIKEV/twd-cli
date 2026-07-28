@@ -29,6 +29,13 @@ export function parseRunArgs(argv) {
         record.speed = parsed;
       }
       i += consumed - 1;
+    } else if (token === '--record-pace' || token.startsWith('--record-pace=')) {
+      const { value, consumed } = readValue(token, '--record-pace', i);
+      const parsed = Number(value);
+      if (value !== undefined && Number.isFinite(parsed) && parsed > 0) {
+        record.pace = parsed;
+      }
+      i += consumed - 1;
     }
   }
 

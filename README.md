@@ -137,6 +137,7 @@ All keys live under `record` in `twd.config.json`.
 | `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 1 }` | Applied only when recording. `width` and `height` set the video dimensions. `deviceScaleFactor` does **not** change the output resolution (Puppeteer measures the recording in CSS pixels), it only changes the page environment under test: raising it makes `srcset` and `image-set` pick 2x assets and sends dpr-branching code down a different path |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Playback speed, e.g. `0.5` for half speed. This is a **uniform stretch of the whole timeline**, not per-command pacing: it slows the fast parts and the already-slow parts equally and cannot hold on a just-clicked element |
+| `pace` | number | `300` | Milliseconds twd-js holds after each command, so the run itself is slower. **On by default**, because an unpaced recording is about a second long and unwatchable. Unlike `speed` this costs no frame rate, since the execution is paced rather than the video stretched. See [Pace versus speed](#pace-versus-speed). Set `0` to disable |
 | `preRoll` | number | `0` | Milliseconds to hold the opening state before the first test runs. Purely cosmetic |
 | `postRoll` | number | `500` | Milliseconds to hold the final state after the last test. **Not cosmetic:** without it the last thing your test did never appears in the video at all. See [Why the ending needs a hold](#why-the-ending-needs-a-hold). Set `0` only if you do not care about the ending |
 | `hideSidebar` | boolean | `true` | Hide the TWD sidebar during capture so the frame is just your app |
@@ -157,17 +158,51 @@ Measured against real Chrome: stopping immediately ended two states early, and a
 overlay after the last test, which forces the real final frame through and then
 holds it. This is why it defaults to on.
 
-#### Making the video longer
+#### Pace versus speed
 
 `postRoll` fixes the *ending*, not the *pace*. Tests run in milliseconds, so a
-two-test run is around a second of video. Two things help today:
+two-test run is around a second of video. `speed` and `pace` both make that
+longer, in opposite ways.
 
-- `record.speed` (or `--record-speed 0.5`) stretches the whole timeline
-- `record.preRoll` and `record.postRoll` stop it starting and ending abruptly
+`speed` is an ffmpeg filter applied after recording. It stretches the same
+frames over a longer timeline, so the effective frame rate falls in proportion:
+measured on identical activity, 30fps at `speed: 1`, 15.3fps at `0.5` and 7.7fps
+at `0.25`. It also slows the dead air exactly as much as the interesting moments.
 
-Both are blunt. Per-command pacing, where the video dwells on each click and
-assertion, has to happen inside `twd-js` because that is where the command loop
-lives, and it is not part of this feature yet.
+`pace` slows the run itself. twd-js holds briefly after each command, so frames
+are captured at full rate and the pauses land where something just happened.
+Typing is spaced out per keystroke too, so text appears character by character.
+
+Pacing is on by default at 300ms, so `--record` alone gives you something
+watchable. Reach for `speed` only when you cannot afford a slower run.
+
+```bash
+# Paced at 300ms, no extra flags
+npx twd-cli run --record --test "checkout flow"
+
+# Slower, for a more deliberate demo
+npx twd-cli run --record --record-pace 500 --test "checkout flow"
+
+# Off, for the fastest possible recorded run
+npx twd-cli run --record --record-pace 0 --test "checkout flow"
+```
+
+Values between 200 and 500 tend to read well.
+
+**The cost is wall clock.** Roughly, a 50 test suite averaging 10 actions per
+test gains about 2.5 minutes at 300ms and 4 minutes at 500ms. That is the reason
+to scope a recorded run with `--test` rather than record everything.
+
+Hitting `protocolTimeout` is unlikely: a chunk is `chunkSize` tests inside a
+single browser call bounded by that timeout, so at 300ms you would need around
+100 actions in a single test to reach it. If you do somehow get there, lower
+`chunkSize` or raise `protocolTimeout`.
+
+Pacing also inserts real delays between actions, which can hide race conditions,
+so a paced run is even less representative of CI than a recorded run already is.
+
+Pacing needs a `twd-js` version that provides the hook. On an older version the
+run still completes and still records, but unpaced, with a warning saying so.
 
 ## How It Works
 

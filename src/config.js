@@ -13,6 +13,14 @@ export const DEFAULT_RECORD = {
   viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
   fps: 30,
   speed: 1,
+  // Milliseconds twd-js holds after each command, driven through
+  // window.__twdSetPace. Unlike `speed`, this slows the run itself rather than
+  // stretching the video, so it does not cost frame rate.
+  //
+  // On by default, because an unpaced recording is roughly a second long and
+  // nobody can watch it. 300 rather than 500: still clearly watchable, and it
+  // costs about 40% less wall clock on a broad run. Set 0 to disable.
+  pace: 300,
   // A beat on the opening state before the first test runs. Cosmetic, off by
   // default.
   preRoll: 0,

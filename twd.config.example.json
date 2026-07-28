@@ -15,6 +15,7 @@
     "viewport": { "width": 1280, "height": 720, "deviceScaleFactor": 1 },
     "fps": 30,
     "speed": 1,
+    "pace": 300,
     "preRoll": 0,
     "postRoll": 500,
     "hideSidebar": true,

@@ -190,6 +190,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       fps: 30,
       speed: 1,
+      pace: 300,
       preRoll: 0,
       postRoll: 500,
       hideSidebar: true,
@@ -253,4 +254,25 @@ describe('loadConfig', () => {
     expect(config.record.enabled).toBe(false);
     expect(config.record.format).toBe('mp4');
   });
+
+  it('defaults record.pace to 300 so a plain --record run is watchable', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    expect(loadConfig().record.pace).toBe(300);
+  });
+
+  it('merges a partial record.pace without dropping the other record defaults', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ record: { pace: 500 } })
+    );
+
+    const { record } = loadConfig();
+
+    expect(record.pace).toBe(500);
+    expect(record.postRoll).toBe(500);
+    expect(record.format).toBe('mp4');
+    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  });
+
 });
