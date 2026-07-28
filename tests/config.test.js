@@ -190,7 +190,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       fps: 30,
       speed: 1,
-      pace: 0,
+      pace: 300,
       preRoll: 0,
       postRoll: 500,
       hideSidebar: true,
@@ -255,10 +255,10 @@ describe('loadConfig', () => {
     expect(config.record.format).toBe('mp4');
   });
 
-  it('defaults record.pace to 0 so recording never paces unless asked', () => {
+  it('defaults record.pace to 300 so a plain --record run is watchable', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
-    expect(loadConfig().record.pace).toBe(0);
+    expect(loadConfig().record.pace).toBe(300);
   });
 
   it('merges a partial record.pace without dropping the other record defaults', () => {
