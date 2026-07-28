@@ -137,8 +137,37 @@ All keys live under `record` in `twd.config.json`.
 | `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 1 }` | Applied only when recording. `width` and `height` set the video dimensions. `deviceScaleFactor` does **not** change the output resolution (Puppeteer measures the recording in CSS pixels), it only changes the page environment under test: raising it makes `srcset` and `image-set` pick 2x assets and sends dpr-branching code down a different path |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Playback speed, e.g. `0.5` for half speed. This is a **uniform stretch of the whole timeline**, not per-command pacing: it slows the fast parts and the already-slow parts equally and cannot hold on a just-clicked element |
+| `preRoll` | number | `0` | Milliseconds to hold the opening state before the first test runs. Purely cosmetic |
+| `postRoll` | number | `500` | Milliseconds to hold the final state after the last test. **Not cosmetic:** without it the last thing your test did never appears in the video at all. See [Why the ending needs a hold](#why-the-ending-needs-a-hold). Set `0` only if you do not care about the ending |
 | `hideSidebar` | boolean | `true` | Hide the TWD sidebar during capture so the frame is just your app |
 | `ffmpegPath` | string | `"ffmpeg"` | Path to the ffmpeg binary if it is not on your `PATH` |
+
+#### Why the ending needs a hold
+
+Chrome only sends a video frame when the page repaints, and Puppeteer holds each
+frame until the *next* one arrives, because the next frame's timestamp is what
+says how long to display the current one. The newest frame is therefore never
+written, and stopping the recorder pads the tail by repeating the one before it.
+
+A settled page produces no more repaints, so simply waiting does not help.
+Measured against real Chrome: stopping immediately ended two states early, and a
+400ms plain wait still ended one state early.
+
+`postRoll` fixes this by briefly repainting the whole viewport with an invisible
+overlay after the last test, which forces the real final frame through and then
+holds it. This is why it defaults to on.
+
+#### Making the video longer
+
+`postRoll` fixes the *ending*, not the *pace*. Tests run in milliseconds, so a
+two-test run is around a second of video. Two things help today:
+
+- `record.speed` (or `--record-speed 0.5`) stretches the whole timeline
+- `record.preRoll` and `record.postRoll` stop it starting and ending abruptly
+
+Both are blunt. Per-command pacing, where the video dwells on each click and
+assertion, has to happen inside `twd-js` because that is where the command loop
+lives, and it is not part of this feature yet.
 
 ## How It Works
 

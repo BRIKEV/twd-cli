@@ -13,9 +13,17 @@ vi.mock('../src/contracts.js', () => ({
 vi.mock('../src/contractReport.js', () => ({
   printContractReport: vi.fn(),
 }));
+// assertFfmpegAvailable is mocked so no test needs a real binary. The two hold
+// helpers are mocked so their call ordering is observable here; their real
+// behavior is covered in tests/recorder.test.js.
 vi.mock('../src/recorder.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, assertFfmpegAvailable: vi.fn() };
+  return {
+    ...actual,
+    assertFfmpegAvailable: vi.fn(),
+    holdOpeningFrame: vi.fn(),
+    holdFinalFrame: vi.fn(),
+  };
 });
 
 import fs from 'fs';
@@ -23,7 +31,7 @@ import puppeteer from 'puppeteer';
 import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
-import { assertFfmpegAvailable } from '../src/recorder.js';
+import { assertFfmpegAvailable, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
 
 function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
   return {
@@ -976,5 +984,89 @@ describe("runTests ffmpeg probe", () => {
 
     expect(puppeteer.launch).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe("runTests pre-roll and post-roll", () => {
+  const rollConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    preRoll: 250,
+    postRoll: 500,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // An earlier describe's restoreAllMocks puts these back to their real
+    // implementations, so neuter them again or the probe actually shells out
+    // and holdFinalFrame actually drives page.evaluate.
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(holdOpeningFrame).mockReset();
+    vi.mocked(holdFinalFrame).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function passingPage(recorder) {
+    return createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+      recorder,
+    });
+  }
+
+  it("holds the opening frame after starting the recorder", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: rollConfig });
+    const page = passingPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(holdOpeningFrame).toHaveBeenCalledWith(250);
+  });
+
+  it("holds the final frame before the recorder is stopped", async () => {
+    const order = [];
+    vi.mocked(holdFinalFrame).mockImplementation(() => { order.push('hold'); });
+    const recorder = {
+      stop: vi.fn(() => new Promise((resolve) => setTimeout(() => {
+        order.push('stop');
+        resolve();
+      }, 0))),
+    };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: rollConfig });
+    const page = passingPage(recorder);
+    const browser = createMockBrowser(page);
+    browser.close = vi.fn(() => { order.push('close'); });
+    puppeteer.launch.mockResolvedValue(browser);
+
+    await runTests();
+
+    // The hold is what gets the last test's result into the video, so it has to
+    // land before stop(), and stop() before close().
+    expect(order).toEqual(['hold', 'stop', 'close']);
+    expect(holdFinalFrame).toHaveBeenCalledWith(page, 500);
+  });
+
+  it("does neither when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = passingPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(holdOpeningFrame).not.toHaveBeenCalled();
+    expect(holdFinalFrame).not.toHaveBeenCalled();
   });
 });

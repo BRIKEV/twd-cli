@@ -190,9 +190,25 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       fps: 30,
       speed: 1,
+      preRoll: 0,
+      postRoll: 500,
       hideSidebar: true,
       ffmpegPath: 'ffmpeg',
     });
+  });
+
+  it('merges a partial postRoll without dropping the other record defaults', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ record: { postRoll: 0 } })
+    );
+
+    const { record } = loadConfig();
+
+    expect(record.postRoll).toBe(0);
+    expect(record.preRoll).toBe(0);
+    expect(record.format).toBe('mp4');
+    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
   });
 
   it('merges a partial record block instead of replacing it', () => {

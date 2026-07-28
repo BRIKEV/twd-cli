@@ -13,6 +13,13 @@ export const DEFAULT_RECORD = {
   viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
   fps: 30,
   speed: 1,
+  // A beat on the opening state before the first test runs. Cosmetic, off by
+  // default.
+  preRoll: 0,
+  // Not cosmetic. Chrome never captures the last thing a test did unless
+  // something repaints afterwards, so without this the video ends one or two
+  // states early. See holdFinalFrame in src/recorder.js. 0 disables it.
+  postRoll: 500,
   hideSidebar: true,
   ffmpegPath: 'ffmpeg',
 };

@@ -11,7 +11,13 @@ import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
-import { assertFfmpegAvailable, applyRecordingFraming, startRecording } from './recorder.js';
+import {
+  assertFfmpegAvailable,
+  applyRecordingFraming,
+  startRecording,
+  holdOpeningFrame,
+  holdFinalFrame,
+} from './recorder.js';
 
 /**
  * Size in bytes of the recorded artifact, or null when it cannot be determined.
@@ -174,6 +180,7 @@ export async function runTests(options = {}) {
       recordOutput = path.join(record.dir, filename);
       recordOutputPath = path.resolve(workingDir, recordOutput);
       recorder = await startRecording(page, record, recordOutputPath);
+      await holdOpeningFrame(record.preRoll);
     }
 
     // Handlers for path-building/summary come from the enumeration so partial
@@ -225,6 +232,12 @@ export async function runTests(options = {}) {
           break;
         }
       }
+    }
+
+    // Must run before stopRecorder(): it is what gets the last test's result
+    // into the video at all, not just a pause on the end. See holdFinalFrame.
+    if (recording) {
+      await holdFinalFrame(page, record.postRoll);
     }
 
     await stopRecorder();

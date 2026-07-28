@@ -45,6 +45,68 @@ export async function applyRecordingFraming(page, record) {
   await page.addStyleTag({ content: FRAMING_CSS });
 }
 
+/**
+ * Holds the opening state before the first test runs.
+ *
+ * A plain wait is enough here. The first screencast frame arrives when capture
+ * starts, and it is held until the first test changes something, so the opening
+ * state simply occupies that much of the timeline.
+ */
+export async function holdOpeningFrame(durationMs) {
+  if (!durationMs || durationMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+/**
+ * Holds the final state at the end of a recording, and makes sure it is
+ * actually captured.
+ *
+ * A plain wait does NOT work here, which is the whole reason this exists.
+ * Puppeteer's frame pipeline uses `bufferCount(2, 1)`: every screencast frame is
+ * held until the next one arrives, because the next frame's timestamp is what
+ * says how long to display the current one. The newest frame is therefore never
+ * emitted, and `stop()` pads the tail by repeating the second-newest. A settled
+ * page produces no further compositor updates, so the last thing a test did is
+ * lost no matter how long you wait.
+ *
+ * Measured against real Chrome: stopping immediately ended two states early; a
+ * 400ms wait still ended one state early; an 800ms wait with a 1px animated
+ * probe produced no new frames at all, because a 1px element gets its own
+ * composited layer and changes no visible surface.
+ *
+ * Toggling a viewport-sized overlay between two near-identical alpha values
+ * repaints the whole surface, so Chrome must emit real frames, while staying
+ * invisible in the output. That flushes the true final state through the
+ * pipeline and then holds it.
+ */
+export async function holdFinalFrame(page, durationMs) {
+  if (!durationMs || durationMs <= 0) return;
+
+  await page.evaluate(async (ms) => {
+    const veil = document.createElement('div');
+    veil.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'pointer-events:none',
+      'z-index:2147483647',
+      'background:rgba(255,255,255,0)',
+    ].join(';');
+    document.body.appendChild(veil);
+
+    try {
+      const deadline = performance.now() + ms;
+      let lit = false;
+      while (performance.now() < deadline) {
+        lit = !lit;
+        veil.style.background = lit ? 'rgba(255,255,255,0.004)' : 'rgba(255,255,255,0)';
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } finally {
+      veil.remove();
+    }
+  }, durationMs);
+}
+
 export async function startRecording(page, record, outputPath) {
   const outputDir = path.dirname(outputPath);
   if (!fs.existsSync(outputDir)) {
