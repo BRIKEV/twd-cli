@@ -13,14 +13,27 @@ vi.mock('../src/contracts.js', () => ({
 vi.mock('../src/contractReport.js', () => ({
   printContractReport: vi.fn(),
 }));
+// assertFfmpegAvailable is mocked so no test needs a real binary. The two hold
+// helpers are mocked so their call ordering is observable here; their real
+// behavior is covered in tests/recorder.test.js.
+vi.mock('../src/recorder.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    assertFfmpegAvailable: vi.fn(),
+    holdOpeningFrame: vi.fn(),
+    holdFinalFrame: vi.fn(),
+  };
+});
 
 import fs from 'fs';
 import puppeteer from 'puppeteer';
 import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
+import { assertFfmpegAvailable, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
 
-function createMockPage({ handlers = [], testStatus = [] } = {}) {
+function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
   return {
     goto: vi.fn(),
     waitForSelector: vi.fn(),
@@ -28,6 +41,9 @@ function createMockPage({ handlers = [], testStatus = [] } = {}) {
       .mockResolvedValueOnce(handlers) // enumeration pass returns handler metadata
       .mockResolvedValue(testStatus),  // each chunk run returns its testStatus array
     exposeFunction: vi.fn(),
+    setViewport: vi.fn(),
+    addStyleTag: vi.fn(),
+    screencast: vi.fn().mockResolvedValue(recorder ?? { stop: vi.fn() }),
   };
 }
 
@@ -658,5 +674,399 @@ describe("runTests", () => {
     expect(errors.some((e) => e.includes('protocolTimeout'))).toBe(true);
     expect(browser.close).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe("runTests recording", () => {
+  const recordConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  let consoleSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks keeps implementations, so drop anything a previous test
+    // queued on these two: a leaked throwing probe or a leaked stat size would
+    // silently change what every later test exercises.
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not touch any recording API when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).not.toHaveBeenCalled();
+    expect(page.addStyleTag).not.toHaveBeenCalled();
+    expect(page.screencast).not.toHaveBeenCalled();
+  });
+
+  it("sets the viewport, injects framing and starts the screencast when enabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [
+        { id: 's', name: 'Login', type: 'suite', children: ['1'] },
+        { id: '1', name: 'shows error', type: 'test', parent: 's' },
+      ],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).toHaveBeenCalledWith(recordConfig.viewport);
+    expect(page.addStyleTag).toHaveBeenCalled();
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringContaining('login-shows-error.mp4'),
+        format: 'mp4',
+        overwrite: true,
+      })
+    );
+  });
+
+  it("stops the recorder before closing the browser", async () => {
+    const order = [];
+    // stop() must resolve on a later tick, not synchronously. A synchronous
+    // mock would keep this assertion green even if index.js dropped the await,
+    // which in production is the un-awaited ffmpeg finalize that truncates the
+    // file.
+    const recorder = {
+      stop: vi.fn(() => new Promise((resolve) => {
+        setTimeout(() => {
+          order.push('stop');
+          resolve();
+        }, 0);
+      })),
+    };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+      recorder,
+    });
+    const browser = createMockBrowser(page);
+    browser.close = vi.fn(() => { order.push('close'); });
+    puppeteer.launch.mockResolvedValue(browser);
+
+    await runTests();
+
+    expect(order).toEqual(['stop', 'close']);
+  });
+
+  it("still stops the recorder when a chunk throws", async () => {
+    const recorder = { stop: vi.fn() };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      recorder,
+    });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce([{ id: '1', name: 'test1', type: 'test' }])
+      .mockRejectedValue(new Error('boom'));
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('boom');
+
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts a recorder when no test matches the filter", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runTests({ testFilters: ['nothing matches this'] });
+
+    expect(page.screencast).not.toHaveBeenCalled();
+  });
+
+  it("applies CLI record overrides over the config file", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: { ...recordConfig, enabled: false } });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ recordOverrides: { enabled: true, dir: './clips' } });
+
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining('clips') })
+    );
+  });
+
+  it("stops the recorder exactly once when something throws after the success-path stop", async () => {
+    // The window between the success-path stopRecorder() and browser.close():
+    // coverage collection is the natural thing to throw in it. Without the
+    // idempotency guard the catch path would stop an already-stopped recorder.
+    const recorder = { stop: vi.fn().mockResolvedValue(undefined) };
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      coverage: true,
+      record: recordConfig,
+    });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      recorder,
+    });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce([{ id: '1', name: 'test1', type: 'test' }]) // enumeration
+      .mockResolvedValueOnce([{ id: '1', status: 'pass' }])              // chunk run
+      .mockRejectedValueOnce(new Error('coverage boom'));                // coverage read
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('coverage boom');
+
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns instead of claiming success when the artifact is empty", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 0 });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTests();
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded'))).toBe(false);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('empty file'))).toBe(true);
+    expect(warnings.some((w) => w.includes('repaints'))).toBe(true);
+  });
+
+  it("warns when the artifact was never created at all", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockImplementation(() => {
+      const err = new Error('ENOENT: no such file or directory');
+      err.code = 'ENOENT';
+      throw err;
+    });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTests();
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded'))).toBe(false);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('empty file'))).toBe(true);
+  });
+
+  it("reports the recorded artifact when the file has bytes", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTests();
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded 1 test(s) to'))).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("runTests ffmpeg probe", () => {
+  const recordConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("probes for ffmpeg when recording is enabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(assertFfmpegAvailable).toHaveBeenCalledWith('ffmpeg');
+  });
+
+  it("passes a configured ffmpegPath to the probe", async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: { ...recordConfig, ffmpegPath: '/opt/homebrew/bin/ffmpeg' },
+    });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(assertFfmpegAvailable).toHaveBeenCalledWith('/opt/homebrew/bin/ffmpeg');
+  });
+
+  it("does not probe for ffmpeg when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(assertFfmpegAvailable).not.toHaveBeenCalled();
+  });
+
+  it("fails before launching the browser when ffmpeg is missing", async () => {
+    // The whole point of the pre-flight probe: no wasted launch + navigation
+    // before the user learns ffmpeg is not installed.
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(assertFfmpegAvailable).mockImplementation(() => {
+      throw new Error('Recording requires ffmpeg, which was not found.');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('Recording requires ffmpeg');
+
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+});
+
+describe("runTests pre-roll and post-roll", () => {
+  const rollConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    preRoll: 250,
+    postRoll: 500,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // An earlier describe's restoreAllMocks puts these back to their real
+    // implementations, so neuter them again or the probe actually shells out
+    // and holdFinalFrame actually drives page.evaluate.
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(holdOpeningFrame).mockReset();
+    vi.mocked(holdFinalFrame).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function passingPage(recorder) {
+    return createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+      recorder,
+    });
+  }
+
+  it("holds the opening frame after starting the recorder", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: rollConfig });
+    const page = passingPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(holdOpeningFrame).toHaveBeenCalledWith(250);
+  });
+
+  it("holds the final frame before the recorder is stopped", async () => {
+    const order = [];
+    vi.mocked(holdFinalFrame).mockImplementation(() => { order.push('hold'); });
+    const recorder = {
+      stop: vi.fn(() => new Promise((resolve) => setTimeout(() => {
+        order.push('stop');
+        resolve();
+      }, 0))),
+    };
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: rollConfig });
+    const page = passingPage(recorder);
+    const browser = createMockBrowser(page);
+    browser.close = vi.fn(() => { order.push('close'); });
+    puppeteer.launch.mockResolvedValue(browser);
+
+    await runTests();
+
+    // The hold is what gets the last test's result into the video, so it has to
+    // land before stop(), and stop() before close().
+    expect(order).toEqual(['hold', 'stop', 'close']);
+    expect(holdFinalFrame).toHaveBeenCalledWith(page, 500);
+  });
+
+  it("does neither when recording is disabled", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    const page = passingPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(holdOpeningFrame).not.toHaveBeenCalled();
+    expect(holdFinalFrame).not.toHaveBeenCalled();
   });
 });

@@ -10,17 +10,72 @@ import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
+import { resolveRecordFilename } from './recordFilename.js';
+import {
+  assertFfmpegAvailable,
+  applyRecordingFraming,
+  startRecording,
+  holdOpeningFrame,
+  holdFinalFrame,
+} from './recorder.js';
+
+/**
+ * Size in bytes of the recorded artifact, or null when it cannot be determined.
+ *
+ * A resolved `stop()` is not evidence of a usable file. Puppeteer's frame
+ * pipeline buffers with `bufferCount(2, 1)`, so nothing is written until a
+ * second CDP screencast frame arrives, and Chrome only emits frames on a
+ * compositor update. A suite that never repaints, or a run with no tests at
+ * all, finishes cleanly with a 0-byte file.
+ *
+ * The null case is unreachable against the real `fs`, where `statSync` either
+ * returns a `Stats` or throws. It exists so an auto-mocked `fs` in the test
+ * suite neither crashes here nor invents a bogus warning.
+ */
+function recordedFileSize(absPath) {
+  try {
+    const stats = fs.statSync(absPath);
+    return stats && typeof stats.size === 'number' ? stats.size : null;
+  } catch {
+    // statSync throws ENOENT when the file was never created at all.
+    return 0;
+  }
+}
 
 export async function runTests(options = {}) {
-  const { testFilters = [] } = options;
+  const { testFilters = [], recordOverrides = {} } = options;
   let browser;
   let config;
   let startedAt = null;
   let partialStatus = [];
   let partialHandlers = [];
+  let recorder = null;
+  let recordOutput = null;
+  let recordOutputPath = null;
+
+  // Stops the screencast at most once. Must always run before browser.close():
+  // if the browser goes first, ffmpeg is orphaned and the file is truncated.
+  const stopRecorder = async () => {
+    if (!recorder) return;
+    const active = recorder;
+    recorder = null;
+    try {
+      await active.stop();
+    } catch (err) {
+      console.warn(`Warning: could not finalize recording: ${err.message}`);
+    }
+  };
+
   try {
     config = loadConfig();
     const workingDir = process.cwd();
+    // config.record can be a shared default object; copy instead of mutating it.
+    const record = { ...(config.record || {}), ...recordOverrides };
+    const recording = Boolean(record.enabled);
+
+    if (recording) {
+      assertFfmpegAvailable(record.ffmpegPath);
+    }
 
     // Load contract validators if configured
     let contractValidators = [];
@@ -35,6 +90,10 @@ export async function runTests(options = {}) {
     });
 
     const page = await browser.newPage();
+
+    if (recording) {
+      await page.setViewport(record.viewport);
+    }
 
     // Register mock collector for contract validation
     const collectedMocks = new Map();
@@ -57,6 +116,10 @@ export async function runTests(options = {}) {
 
     // Wait for the selector to be available
     await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
+
+    if (recording) {
+      await applyRecordingFraming(page, record);
+    }
 
     // Enumerate registered handlers (for the count line and --test filtering)
     const registeredHandlers = await page.evaluate(() => {
@@ -100,6 +163,25 @@ export async function runTests(options = {}) {
     // Resolve the ordered id list to run: the filter result, or all tests.
     const baseIds = selectedIds ?? orderedTestIds(registeredHandlers);
     const chunks = chunk(baseIds, config.chunkSize);
+
+    // Recording starts here, not earlier: the output path is fixed up front by
+    // page.screencast(), and the filename depends on which tests survived the
+    // filter. Starting after baseIds is resolved also means the "no tests
+    // matched" early return can never leave a recorder running.
+    if (recording) {
+      const testNames = baseIds
+        .map((id) => buildTestPath(id, registeredHandlers))
+        .filter(Boolean);
+      const filename = resolveRecordFilename({
+        testNames,
+        filename: record.filename,
+        format: record.format,
+      });
+      recordOutput = path.join(record.dir, filename);
+      recordOutputPath = path.resolve(workingDir, recordOutput);
+      recorder = await startRecording(page, record, recordOutputPath);
+      await holdOpeningFrame(record.preRoll);
+    }
 
     // Handlers for path-building/summary come from the enumeration so partial
     // results are always printable even if a chunk never returns.
@@ -149,6 +231,28 @@ export async function runTests(options = {}) {
           stoppedEarly = true;
           break;
         }
+      }
+    }
+
+    // Must run before stopRecorder(): it is what gets the last test's result
+    // into the video at all, not just a pause on the end. See holdFinalFrame.
+    if (recording) {
+      await holdFinalFrame(page, record.postRoll);
+    }
+
+    await stopRecorder();
+    if (recording) {
+      // Report what is on disk, not that stop() resolved. This also covers a
+      // stop() that rejected, which stopRecorder swallows into a warning.
+      if (recordedFileSize(recordOutputPath) === 0) {
+        console.warn(
+          `Warning: recording produced an empty file at ${recordOutput}.`
+        );
+        console.warn(
+          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
+        );
+      } else {
+        console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
       }
     }
 
@@ -254,6 +358,7 @@ export async function runTests(options = {}) {
     if (error && typeof error === 'object') {
       error.reported = true;
     }
+    await stopRecorder();
     if (browser) await browser.close();
     throw error;
   }

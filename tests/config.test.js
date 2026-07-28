@@ -1,5 +1,5 @@
 import { expect, describe, it, beforeEach, afterEach, vi } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, DEFAULT_RECORD } from '../src/config.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -35,6 +35,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      record: DEFAULT_RECORD,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -62,6 +63,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      record: DEFAULT_RECORD,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -89,7 +91,7 @@ describe('loadConfig', () => {
 
     const config = loadConfig();
 
-    expect(config).toEqual(userConfig);
+    expect(config).toEqual({ ...userConfig, record: DEFAULT_RECORD });
   });
 
   it('should return defaults and warn when config file has invalid JSON', () => {
@@ -112,6 +114,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      record: DEFAULT_RECORD,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),
@@ -174,5 +177,80 @@ describe('loadConfig', () => {
     const config = loadConfig();
     expect(config.maxFailures).toBe(0);
     expect(config.chunkSize).toBe(25);
+  });
+
+  it('includes fully populated record defaults when no config file exists', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    expect(loadConfig().record).toEqual({
+      enabled: false,
+      dir: './twd-artifacts',
+      filename: null,
+      format: 'mp4',
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      fps: 30,
+      speed: 1,
+      preRoll: 0,
+      postRoll: 500,
+      hideSidebar: true,
+      ffmpegPath: 'ffmpeg',
+    });
+  });
+
+  it('merges a partial postRoll without dropping the other record defaults', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ record: { postRoll: 0 } })
+    );
+
+    const { record } = loadConfig();
+
+    expect(record.postRoll).toBe(0);
+    expect(record.preRoll).toBe(0);
+    expect(record.format).toBe('mp4');
+    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  });
+
+  it('merges a partial record block instead of replacing it', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ record: { enabled: true, format: 'webm' } })
+    );
+
+    const { record } = loadConfig();
+
+    expect(record.enabled).toBe(true);
+    expect(record.format).toBe('webm');
+    // every other default must survive
+    expect(record.dir).toBe('./twd-artifacts');
+    expect(record.fps).toBe(30);
+    expect(record.speed).toBe(1);
+    expect(record.hideSidebar).toBe(true);
+    expect(record.ffmpegPath).toBe('ffmpeg');
+    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  });
+
+  it('merges a partial record.viewport instead of replacing it', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({ record: { viewport: { width: 1920 } } })
+    );
+
+    expect(loadConfig().record.viewport).toEqual({
+      width: 1920,
+      height: 720,
+      deviceScaleFactor: 1,
+    });
+  });
+
+  it('leaves record at defaults when the user config omits it', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ headless: false }));
+
+    const config = loadConfig();
+
+    expect(config.headless).toBe(false);
+    expect(config.record.enabled).toBe(false);
+    expect(config.record.format).toBe('mp4');
   });
 });
