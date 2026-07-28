@@ -1177,7 +1177,7 @@ describe("runTests pacing", () => {
 
     const hasFailures = await runTests();
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('newer twd-js'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('twd-js 1.9.0 or newer'));
     // The run still completes and still records; only the pacing is lost.
     expect(hasFailures).toBe(false);
   });

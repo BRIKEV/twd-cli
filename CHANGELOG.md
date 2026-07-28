@@ -1,3 +1,23 @@
+## <small>1.4.0 (2026-07-28)</small>
+
+* feat(record): video recording for twd-cli runs (#13) ([94c21e0](https://github.com/BRIKEV/twd-cli/commit/94c21e0)), closes [#13](https://github.com/BRIKEV/twd-cli/issues/13)
+* feat: `--record` captures the run to a video via Puppeteer's `page.screencast()`. `--record-dir`, `--record-speed` and a `record` block in `twd.config.json` cover output location, format, viewport, fps and framing
+* feat: the TWD sidebar is hidden during capture and the html margins it sets are reset, so the frame is just your app
+* feat: one clip per run, named after its content. A single recorded test gets a slug of its `"suite > test"` path, anything else gets `run.<ext>`
+* feat(record): drive twd-js command pacing from --record-pace (#15) ([cd9d90c](https://github.com/BRIKEV/twd-cli/commit/cd9d90c)), closes [#15](https://github.com/BRIKEV/twd-cli/issues/15)
+* feat: recorded runs are paced at 300ms by default, so `--record` alone produces something watchable. `--record-pace` changes it, `--record-pace 0` disables. Unlike `--record-speed` this costs no frame rate, because the run is paced rather than the video stretched
+* fix(record): the last state a test reached is now captured. Chrome only emits a frame on repaint and Puppeteer holds each frame until the next arrives, so without `postRoll` the video ended one or two states early
+* feat: add context7 configuration file with URL and public key ([6610302](https://github.com/BRIKEV/twd-cli/commit/6610302))
+
+Recording requires **ffmpeg** on your `PATH`, or `record.ffmpegPath` set. Pacing
+additionally requires `twd-js` 1.9.0 or newer; on an older version the run still
+records, unpaced, with a warning.
+
+A recorded run sets its own viewport and reflows the app to full width, and
+pacing inserts real delays between actions, so a recorded run can pass or fail
+differently from a normal one. Treat the video as a demo artifact and keep
+running CI unrecorded.
+
 ## <small>1.3.1 (2026-07-21)</small>
 
 * feat: fail-fast early bail + durable partial results (#12) ([9b963d2](https://github.com/BRIKEV/twd-cli/commit/9b963d2)), closes [#12](https://github.com/BRIKEV/twd-cli/issues/12)

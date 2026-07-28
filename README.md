@@ -201,8 +201,8 @@ single browser call bounded by that timeout, so at 300ms you would need around
 Pacing also inserts real delays between actions, which can hide race conditions,
 so a paced run is even less representative of CI than a recorded run already is.
 
-Pacing needs a `twd-js` version that provides the hook. On an older version the
-run still completes and still records, but unpaced, with a warning saying so.
+Pacing needs `twd-js` 1.9.0 or newer. On an older version the run still
+completes and still records, but unpaced, with a warning saying so.
 
 ## How It Works
 

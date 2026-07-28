@@ -194,7 +194,7 @@ export async function runTests(options = {}) {
 
         if (applied === null) {
           console.warn(
-            'Warning: --record-pace needs a newer twd-js (no pacing hook found). Recording unpaced.'
+            'Warning: --record-pace needs twd-js 1.9.0 or newer (no pacing hook found). Recording unpaced.'
           );
         } else if (applied !== record.pace) {
           // twd-js clamps, so report what actually took effect.
