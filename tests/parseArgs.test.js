@@ -73,4 +73,27 @@ describe("parseRunArgs", () => {
       record: { enabled: true, speed: 0.5 },
     });
   });
+
+  it("parses --record-pace as a number, both forms", () => {
+    expect(parseRunArgs(['--record-pace', '500']).record).toEqual({ pace: 500 });
+    expect(parseRunArgs(['--record-pace=250']).record).toEqual({ pace: 250 });
+  });
+
+  it("ignores a non-numeric or non-positive --record-pace", () => {
+    expect(parseRunArgs(['--record-pace', 'slow']).record).toEqual({});
+    expect(parseRunArgs(['--record-pace', '0']).record).toEqual({});
+    expect(parseRunArgs(['--record-pace', '-1']).record).toEqual({});
+  });
+
+  it("ignores a trailing --record-pace with no value", () => {
+    expect(parseRunArgs(['--record-pace']).record).toEqual({});
+  });
+
+  it("combines --record-pace with --record and a test filter", () => {
+    expect(parseRunArgs(['--record', '--test', 'checkout', '--record-pace=500'])).toEqual({
+      testFilters: ['checkout'],
+      record: { enabled: true, pace: 500 },
+    });
+  });
+
 });
