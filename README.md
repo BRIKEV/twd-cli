@@ -2,6 +2,14 @@
 
 CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) — executes your in-browser TWD tests in a headless environment. Puppeteer is only used to open the page; all tests run inside the real browser context against real DOM.
 
+- [Installation](#installation)
+- [Usage](#usage): running tests, filtering, configuration
+- [Recording](#recording): capture a run to video, paced so it is watchable
+- [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
+- [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+
 ## Installation
 
 ```bash
@@ -49,40 +57,6 @@ Notes:
 - Code coverage collection is skipped while a `--test` filter is active, since a
   filtered run is a partial (debug) run.
 
-### Recording a run
-
-Record a test run to a video file, for a PR attachment, a docs clip, or a demo:
-
-```bash
-# Record one flow
-npx twd-cli run --record --test "checkout flow"
-
-# Record at half speed, into a custom directory
-npx twd-cli run --record --record-speed 0.5 --record-dir ./clips
-```
-
-Requires ffmpeg. See [Requirements](#requirements).
-
-The run produces a single video containing every matched test, back to back, in
-declaration order. Note that `--test` matches a substring of the full
-`"suite > test"` path, so one filter can match several tests.
-
-The file is named after what is in it: a single recorded test gets a slug of its
-full path (`login-shows-error-on-bad-password.mp4`), and anything else gets
-`run.<ext>`, where `<ext>` comes from `format` (`mp4` by default, or `webm`/`gif`
-if you set that). Re-running overwrites the file.
-
-The TWD sidebar is hidden during recording so the frame is just your app.
-
-Chrome only emits video frames when the page repaints, so a suite that only
-asserts and never changes anything on screen can finish with an empty file. When
-that happens the run says so rather than reporting a video you cannot play.
-
-**A recorded run is a demo artifact, not a substitute for a CI run.** Recording
-sets its own viewport (1280x720 by default, versus the 800x600 a normal run
-uses) and reflows the app to full width, so a recorded run can pass or fail
-differently. Run CI normally and record separately.
-
 ### Configuration
 
 Create a `twd.config.json` file in your project root:
@@ -120,89 +94,51 @@ Create a `twd.config.json` file in your project root:
 | `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
-| `record` | object | see below | Video recording settings (see [Recording a run](#recording-a-run)) |
+| `record` | object | see below | Video recording settings (see [Recording](#recording)) |
 
 **Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
 
-#### Recording Options
+## Recording
 
-All keys live under `record` in `twd.config.json`.
+Record a run to a video file, for a PR attachment, a docs clip, or a demo:
+
+```bash
+npx twd-cli run --record --test "checkout flow"
+```
+
+Requires **ffmpeg** on your `PATH`, or `record.ffmpegPath` set. See [Requirements](#requirements).
+
+Runs are **paced at 300ms by default**, so `--record` on its own produces something watchable rather than a one second blur. Pacing slows the run itself rather than stretching the video, so unlike `--record-speed` it costs no frame rate. It needs `twd-js` 1.9.0 or newer; on an older version the run still records, unpaced, with a warning.
+
+```bash
+npx twd-cli run --record --record-pace 500 --test "checkout flow"   # slower
+npx twd-cli run --record --record-pace 0 --test "checkout flow"     # no pacing
+```
+
+One video per run, containing every matched test back to back in declaration order. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. The file is named after its contents: a single recorded test gets a slug of its full path (`login-shows-error-on-bad-password.mp4`), anything else gets `run.<ext>`. Re-running overwrites it.
+
+**A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x720, versus the 800x600 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
+
+### Recording Options
+
+Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <ms>`. Everything else lives under `record` in `twd.config.json`.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `false` | Turn recording on. Equivalent to passing `--record` |
-| `dir` | string | `"./twd-artifacts"` | Directory the video is written to |
-| `filename` | string \| null | `null` | Explicit output filename. When `null`, the name is derived from the recorded tests. A known extension (`.mp4`, `.webm`, `.gif`) is respected, otherwise `format` supplies it |
-| `format` | string | `"mp4"` | `"mp4"`, `"webm"` or `"gif"`. All three are encoded natively, no conversion step |
-| `viewport` | object | `{ "width": 1280, "height": 720, "deviceScaleFactor": 1 }` | Applied only when recording. `width` and `height` set the video dimensions. `deviceScaleFactor` does **not** change the output resolution (Puppeteer measures the recording in CSS pixels), it only changes the page environment under test: raising it makes `srcset` and `image-set` pick 2x assets and sends dpr-branching code down a different path |
+| `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
+| `dir` | string | `"./twd-artifacts"` | Where the video is written |
+| `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests |
+| `format` | string | `"mp4"` | `"mp4"`, `"webm"` or `"gif"`, all encoded natively |
+| `viewport` | object | `1280x720` | Applied only when recording. `width` and `height` set the video dimensions |
 | `fps` | number | `30` | Capture frame rate |
-| `speed` | number | `1` | Playback speed, e.g. `0.5` for half speed. This is a **uniform stretch of the whole timeline**, not per-command pacing: it slows the fast parts and the already-slow parts equally and cannot hold on a just-clicked element |
-| `pace` | number | `300` | Milliseconds twd-js holds after each command, so the run itself is slower. **On by default**, because an unpaced recording is about a second long and unwatchable. Unlike `speed` this costs no frame rate, since the execution is paced rather than the video stretched. See [Pace versus speed](#pace-versus-speed). Set `0` to disable |
-| `preRoll` | number | `0` | Milliseconds to hold the opening state before the first test runs. Purely cosmetic |
-| `postRoll` | number | `500` | Milliseconds to hold the final state after the last test. **Not cosmetic:** without it the last thing your test did never appears in the video at all. See [Why the ending needs a hold](#why-the-ending-needs-a-hold). Set `0` only if you do not care about the ending |
-| `hideSidebar` | boolean | `true` | Hide the TWD sidebar during capture so the frame is just your app |
-| `ffmpegPath` | string | `"ffmpeg"` | Path to the ffmpeg binary if it is not on your `PATH` |
+| `speed` | number | `1` | Post-hoc playback speed. Costs frame rate, prefer `pace` |
+| `pace` | number | `300` | Milliseconds held after each command. `0` disables |
+| `preRoll` | number | `0` | Milliseconds held on the opening state |
+| `postRoll` | number | `500` | Milliseconds held on the final state. Without it the last thing your test did never appears in the video |
+| `hideSidebar` | boolean | `true` | Hide the TWD sidebar so the frame is just your app |
+| `ffmpegPath` | string | `"ffmpeg"` | Path to the binary if it is not on your `PATH` |
 
-#### Why the ending needs a hold
-
-Chrome only sends a video frame when the page repaints, and Puppeteer holds each
-frame until the *next* one arrives, because the next frame's timestamp is what
-says how long to display the current one. The newest frame is therefore never
-written, and stopping the recorder pads the tail by repeating the one before it.
-
-A settled page produces no more repaints, so simply waiting does not help.
-Measured against real Chrome: stopping immediately ended two states early, and a
-400ms plain wait still ended one state early.
-
-`postRoll` fixes this by briefly repainting the whole viewport with an invisible
-overlay after the last test, which forces the real final frame through and then
-holds it. This is why it defaults to on.
-
-#### Pace versus speed
-
-`postRoll` fixes the *ending*, not the *pace*. Tests run in milliseconds, so a
-two-test run is around a second of video. `speed` and `pace` both make that
-longer, in opposite ways.
-
-`speed` is an ffmpeg filter applied after recording. It stretches the same
-frames over a longer timeline, so the effective frame rate falls in proportion:
-measured on identical activity, 30fps at `speed: 1`, 15.3fps at `0.5` and 7.7fps
-at `0.25`. It also slows the dead air exactly as much as the interesting moments.
-
-`pace` slows the run itself. twd-js holds briefly after each command, so frames
-are captured at full rate and the pauses land where something just happened.
-Typing is spaced out per keystroke too, so text appears character by character.
-
-Pacing is on by default at 300ms, so `--record` alone gives you something
-watchable. Reach for `speed` only when you cannot afford a slower run.
-
-```bash
-# Paced at 300ms, no extra flags
-npx twd-cli run --record --test "checkout flow"
-
-# Slower, for a more deliberate demo
-npx twd-cli run --record --record-pace 500 --test "checkout flow"
-
-# Off, for the fastest possible recorded run
-npx twd-cli run --record --record-pace 0 --test "checkout flow"
-```
-
-Values between 200 and 500 tend to read well.
-
-**The cost is wall clock.** Roughly, a 50 test suite averaging 10 actions per
-test gains about 2.5 minutes at 300ms and 4 minutes at 500ms. That is the reason
-to scope a recorded run with `--test` rather than record everything.
-
-Hitting `protocolTimeout` is unlikely: a chunk is `chunkSize` tests inside a
-single browser call bounded by that timeout, so at 300ms you would need around
-100 actions in a single test to reach it. If you do somehow get there, lower
-`chunkSize` or raise `protocolTimeout`.
-
-Pacing also inserts real delays between actions, which can hide race conditions,
-so a paced run is even less representative of CI than a recorded run already is.
-
-Pacing needs `twd-js` 1.9.0 or newer. On an older version the run still
-completes and still records, but unpaced, with a warning saying so.
+Full explanations, including why `postRoll` is on by default and the measured frame rate cost of `speed`, are in the [Recording Runs](https://brikev.github.io/twd/recording) docs.
 
 ## How It Works
 
