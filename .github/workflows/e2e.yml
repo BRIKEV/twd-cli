@@ -93,3 +93,116 @@ jobs:
           echo "" >> "$REPORT_PATH"
           echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
           gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH"
+
+  e2e-sharded:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Without this, the first red shard cancels its siblings and the merge job
+      # sees gaps it cannot distinguish from a crashed shard.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Install test-example-app dependencies
+        working-directory: test-example-app
+        run: npm install
+
+      - name: Install mock service worker
+        working-directory: test-example-app
+        run: npx twd-js init public --save
+
+      - name: Cache Puppeteer browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/puppeteer
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
+      - name: Start dev server
+        working-directory: test-example-app
+        run: |
+          nohup npx vite --host > vite.log 2>&1 &
+          npx wait-on http://localhost:5173 --timeout 30000
+
+      - name: Run TWD tests for this shard
+        working-directory: test-example-app
+        run: node ../bin/twd-cli.js run --shard ${{ matrix.shard }}/2
+
+      - name: Upload shard report
+        # Always: a red shard must still upload, or merge cannot tell "this shard
+        # failed" from "this shard never ran".
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: twd-run-${{ matrix.shard }}
+          path: test-example-app/.twd/run
+          if-no-files-found: error
+
+  e2e-merge:
+    runs-on: ubuntu-latest
+    needs: [e2e-sharded]
+    # Runs even though a shard job may have exited 1. Without this the merged
+    # summary — the point of the exercise — is never printed.
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Download shard reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: twd-run-*
+          path: test-example-app/.twd/shards
+
+      - name: Merge shard reports
+        working-directory: test-example-app
+        run: node ../bin/twd-cli.js merge .twd/shards
+
+      - name: Verify the merged report
+        working-directory: test-example-app
+        run: |
+          if [ ! -f .twd/merged-run.json ]; then
+            echo "ERROR: merged report not generated"
+            exit 1
+          fi
+          node -e "
+            const r = require('./.twd/merged-run.json');
+            if (r.shards.length !== 2) {
+              console.error('ERROR: expected 2 shards, got ' + r.shards.length);
+              process.exit(1);
+            }
+            if (r.tests.length !== r.discovery.totalTests) {
+              console.error('ERROR: ' + r.tests.length + ' merged tests but ' +
+                r.discovery.totalTests + ' discovered');
+              process.exit(1);
+            }
+            console.log('Merged ' + r.tests.length + ' tests from ' + r.shards.length + ' shards');
+          "
