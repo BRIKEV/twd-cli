@@ -7,6 +7,8 @@ export function formatRunComplete({
   notRun = 0,
   stoppedEarly = false,
   maxFailures,
+  shards = null,
+  computeMs = null,
 }) {
   const passed = testStatus.filter((t) => t.status === 'pass').length;
   const failed = testStatus.filter((t) => t.status === 'fail').length;
@@ -18,7 +20,19 @@ export function formatRunComplete({
     `  Passed: ${passed} | Failed: ${failed} | Skipped: ${skipped}`,
   ];
   if (notRun > 0) lines.push(`  Not run: ${notRun}`);
-  lines.push(`  Duration: ${duration}s`);
+
+  // A merged run has two meaningful durations: the span the developer waited,
+  // and the compute it consumed. A single run has only one, and its line must
+  // stay byte-identical to what it has always printed.
+  const merged = Array.isArray(shards) && shards.length > 1;
+  if (merged) {
+    const compute = (computeMs / 1000).toFixed(1);
+    lines.push(`  Duration: ${duration}s wall | ${compute}s across ${shards.length} shards`);
+    const cells = shards.map((s) => `${s.index} ${s.failed > 0 ? '✗' : '✓'}${s.executed}`);
+    lines.push(`  Shards: ${cells.join(' | ')}`);
+  } else {
+    lines.push(`  Duration: ${duration}s`);
+  }
 
   const failures = testStatus.filter((t) => t.status === 'fail');
   if (failures.length > 0) {

@@ -178,3 +178,47 @@ describe('formatRunComplete', () => {
     expect(block).not.toContain('0 test(s) were not run');
   });
 });
+
+describe('formatRunComplete with shards', () => {
+  const handlers = [
+    { id: 's1', name: 'Login', parent: null, type: 'suite' },
+    { id: 't1', name: 'works', parent: 's1', type: 'test' },
+  ];
+  const testStatus = [{ id: 't1', status: 'pass' }];
+
+  function shard(index, overrides = {}) {
+    return { index, total: 4, executed: 30, failed: 0, notRun: 0, stoppedEarly: false, ...overrides };
+  }
+
+  it('adds a shard breakdown line when more than one shard merged', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 38_200, computeMs: 134_200,
+      shards: [shard(1), shard(2, { failed: 3 }), shard(3), shard(4)],
+    });
+    expect(output).toContain('Shards: 1 ✓30 | 2 ✗30 | 3 ✓30 | 4 ✓30');
+  });
+
+  it('reports wall clock and compute separately for a merged run', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 38_200, computeMs: 134_200,
+      shards: [shard(1), shard(2)],
+    });
+    expect(output).toContain('Duration: 38.2s wall | 134.2s across 2 shards');
+  });
+
+  // The existing single-run format must not shift.
+  it('keeps the plain duration line when there are no shards', () => {
+    const output = formatRunComplete({ testStatus, handlers, durationMs: 4_200 });
+    expect(output).toContain('Duration: 4.2s');
+    expect(output).not.toContain('wall');
+    expect(output).not.toContain('Shards:');
+  });
+
+  it('keeps the plain duration line for a single shard', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 4_200, computeMs: 4_200, shards: [shard(1, { total: 1 })],
+    });
+    expect(output).toContain('Duration: 4.2s');
+    expect(output).not.toContain('Shards:');
+  });
+});
