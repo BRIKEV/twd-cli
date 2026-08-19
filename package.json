@@ -24,6 +24,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "istanbul-lib-coverage": "^3.2.2",
     "openapi-mock-validator": "^0.3.0",
     "puppeteer": "^25.3.0"
   },
