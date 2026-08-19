@@ -102,6 +102,8 @@ jobs:
       # sees gaps it cannot distinguish from a crashed shard.
       fail-fast: false
       matrix:
+        # The "2" here must match the shard total below (--shard N/2). Bump both
+        # together, or shards will disagree on the total and merge will reject them.
         shard: [1, 2]
 
     steps:
@@ -189,19 +191,25 @@ jobs:
       - name: Verify the merged report
         working-directory: test-example-app
         run: |
+          # Cheap sanity guard, not a real gate: the "Merge shard reports" step
+          # above has no `if: always()`, so we only reach here after `twd-cli
+          # merge` exited 0 — and runMerge only writes merged-run.json once it
+          # has decided to succeed (src/mergeCommand.js). This check protects
+          # against that assumption changing later, but it cannot fail today.
           if [ ! -f .twd/merged-run.json ]; then
             echo "ERROR: merged report not generated"
             exit 1
           fi
           node -e "
             const r = require('./.twd/merged-run.json');
-            if (r.shards.length !== 2) {
-              console.error('ERROR: expected 2 shards, got ' + r.shards.length);
-              process.exit(1);
-            }
             if (r.tests.length !== r.discovery.totalTests) {
               console.error('ERROR: ' + r.tests.length + ' merged tests but ' +
                 r.discovery.totalTests + ' discovered');
+              process.exit(1);
+            }
+            const executed = r.shards.reduce((sum, s) => sum + s.executed, 0);
+            if (executed !== r.tests.length) {
+              console.error('ERROR: shards report ' + executed + ' executed but merged ' + r.tests.length + ' tests');
               process.exit(1);
             }
             console.log('Merged ' + r.tests.length + ' tests from ' + r.shards.length + ' shards');
