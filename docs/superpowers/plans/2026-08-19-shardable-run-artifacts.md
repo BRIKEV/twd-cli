@@ -325,6 +325,26 @@ In `src/parseArgs.js`, add the import at the top:
 import { parseShardSpec } from './shard.js';
 ```
 
+Hoist the existing `readValue` closure to module scope so `parseMergeArgs` can
+share it rather than duplicating it. Delete the `const readValue = ...` block
+from inside `parseRunArgs` and add above it:
+
+```js
+// Reads a flag's value in either `--flag value` or `--flag=value` form, and
+// reports how many tokens it consumed. Shared by both parsers.
+function readValue(argv, token, prefix, index) {
+  if (token === prefix) {
+    return { value: argv[index + 1], consumed: argv[index + 1] !== undefined ? 2 : 1 };
+  }
+  return { value: token.slice(prefix.length + 1), consumed: 1 };
+}
+```
+
+Then update every call site inside `parseRunArgs` to pass `argv` first — there
+are four existing ones (`--test`, `--record-dir`, `--record-speed`,
+`--record-pace`), each becoming e.g. `readValue(argv, token, '--test', i)`. The
+17 existing tests in `tests/parseArgs.test.js` guard this refactor.
+
 Inside `parseRunArgs`, add two declarations next to the existing ones:
 
 ```js
@@ -339,13 +359,13 @@ Add two branches to the token loop, after the `--test` branch:
 
 ```js
     } else if (token === '--shard' || token.startsWith('--shard=')) {
-      const { value, consumed } = readValue(token, '--shard', i);
+      const { value, consumed } = readValue(argv, token, '--shard', i);
       // Throws on a malformed spec. A silently-ignored --shard would run zero
       // tests and exit 0.
       shard = parseShardSpec(value);
       i += consumed - 1;
     } else if (token === '--report-dir' || token.startsWith('--report-dir=')) {
-      const { value, consumed } = readValue(token, '--report-dir', i);
+      const { value, consumed } = readValue(argv, token, '--report-dir', i);
       if (value !== undefined) reportDir = value;
       i += consumed - 1;
 ```
@@ -366,18 +386,11 @@ export function parseMergeArgs(argv) {
   let dir = null;
   let out = null;
 
-  const readValue = (token, prefix, index) => {
-    if (token === prefix) {
-      return { value: argv[index + 1], consumed: argv[index + 1] !== undefined ? 2 : 1 };
-    }
-    return { value: token.slice(prefix.length + 1), consumed: 1 };
-  };
-
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
 
     if (token === '--out' || token.startsWith('--out=')) {
-      const { value, consumed } = readValue(token, '--out', i);
+      const { value, consumed } = readValue(argv, token, '--out', i);
       if (value !== undefined) out = value;
       i += consumed - 1;
     } else if (!token.startsWith('--') && dir === null) {
