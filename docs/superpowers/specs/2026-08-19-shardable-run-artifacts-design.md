@@ -145,6 +145,31 @@ code. Without the fingerprint that manifests as tests quietly never running and
 a green build. With it, merge refuses and explains why. This is the part of the
 design least safe to drop.
 
+## Hard constraint: no change to non-sharded runs
+
+A run without `--shard` must behave exactly as 1.4.0 does — same console output,
+same files written, same exit code. The feature is strictly additive, and every
+behavior change below is gated on sharding being active. This is what makes the
+work safe to ship as a beta that existing users can install without reading a
+migration note.
+
+Two changes needed scoping to honor this, and both reduce to one extra term in an
+existing conditional:
+
+| Today (`src/index.js`) | Becomes |
+|---|---|
+| `config.coverage && !hasFailures && !selectedIds` (`:325`) | `config.coverage && filters.length === 0 && (sharded \|\| !hasFailures)` |
+| `!stoppedEarly && config.contracts?.length` (`:296`) | `(sharded \|\| !stoppedEarly) && config.contracts?.length` |
+
+With `sharded === false` each reduces to today's expression exactly — the
+`!selectedIds` guard and `filters.length === 0` are the same predicate, since
+`selectedIds` is only set by `--test` on a non-sharded run.
+
+The remaining additions cannot affect an existing run by construction: new flags
+are inert when absent, report writing happens only under `--shard`, `merge` is a
+new subcommand, and `formatRunComplete`'s new optional `shards` param changes
+output only when more than one shard is present.
+
 ## Coverage: the gate moves up a level
 
 Today coverage is gated twice (`src/index.js:325`):
@@ -160,7 +185,8 @@ project-wide number. A shard slice is not a user filter, so the rule becomes:
 **collect coverage unless `selection.filters` is non-empty.** A filtered run
 still skips, sharded or not.
 
-`!hasFailures` is the more interesting one. `hasFailures` is per shard, so
+`!hasFailures` is the more interesting one, and per the constraint above it is
+relaxed **only when sharded**. `hasFailures` is per shard, so
 applying it at shard level gives the worst outcome: shards 1, 2 and 4 write
 coverage, shard 3 goes red and writes none, and merge emits a report that looks
 complete while missing a quarter of the code paths. Silent understatement is
@@ -172,14 +198,14 @@ The same policy therefore applies one level up:
   shard's file is never mysteriously absent.
 - **Merge writes `.nyc_output/out.json` only when the merged run is green.**
 
-Net policy is unchanged — a red run yields no coverage — but it is now keyed on
-the true global result.
+Net policy is unchanged — a red run yields no coverage — but under sharding it is
+keyed on the true global result rather than on one shard's.
 
 Where coverage lands depends on whether reporting is active, and the two paths
 are mutually exclusive on purpose:
 
-- **Without `--shard`** (today's normal run): `.nyc_output/out.json`, exactly as
-  now. The only change is that a failing run writes it too.
+- **Without `--shard`** (today's normal run): `.nyc_output/out.json`, written
+  exactly as now, including still being skipped on failure. No change at all.
 - **With `--shard`**: `<report-dir>/coverage.json` only. It is
   deliberately *not* also written to `.nyc_output/out.json`, because one shard's
   partial coverage sitting at the path `nyc` reads by default would masquerade as
@@ -187,7 +213,7 @@ are mutually exclusive on purpose:
   and by nothing else.
 
 Since a red run still exits 1, no coverage gate can be fooled by the relaxed
-failure gate.
+failure gate on the sharded path.
 
 ## maxFailures stays per shard
 
@@ -203,11 +229,12 @@ the extra wasted time is not noticeable. Dividing the budget instead
 failures is hard to explain from its own log, and it makes the CLI depend on the
 shard count to compute a threshold.
 
-A shard that bails no longer skips contract validation. Today `stoppedEarly`
-skips it outright (`src/index.js:296`, `:317`); instead it validates what it
-collected and sets `contracts.partial: true`, so merge can report exactly what
-is missing rather than silently dropping a quarter of the mocks. The console
-report gains a partial banner in place of the current skip message.
+A bailing **shard** no longer skips contract validation. Today `stoppedEarly`
+skips it outright (`src/index.js:296`, `:317`); under sharding it instead
+validates what it collected and sets `contracts.partial: true`, so merge can
+report exactly what is missing rather than silently dropping a quarter of the
+mocks. The console report gains a partial banner in place of the skip message.
+A non-sharded early-stopped run keeps skipping validation, as today.
 
 ## `twd-cli merge <dir>`
 
@@ -363,6 +390,18 @@ SHA-pins them, matching `.github/workflows/e2e.yml`.
 Small and battle-tested, but it means running `npm run lock:linux` afterwards so
 the wasm32-wasi transitive deps stay correct for Linux CI.
 
+## Release
+
+Ships as a prerelease so it can be exercised against a real suite before it
+becomes the default install. `package.json` goes to `1.5.0-beta.0`, and the
+GitHub Release is marked as a prerelease — `publish.yml:27` already routes
+prereleases to the `beta` dist-tag, so `npm install twd-cli` keeps resolving to
+1.4.0 and testers opt in with `npm install twd-cli@beta`. No workflow change.
+
+Per the repo's release process the version bump is its own commit carrying
+`package.json`, the lockfile regenerated with `npm run lock:linux`, and a
+hand-written CHANGELOG entry. The `conventional-changelog` script is not used.
+
 ## Testing
 
 Existing constraints hold: no test may require a real browser or a real ffmpeg
@@ -386,6 +425,12 @@ shards, coverage counts summing across shards, `--shard` parse validation, and
 extensions to `tests/runTests.test.js` asserting the shard slice reaches
 `runByIds`, the report is written, and **coverage is written despite failures**
 (the gate change).
+
+The constraint above needs its own explicit coverage, not just inference: tests
+asserting that with no `--shard` flag, a failing run still writes **no**
+coverage file and an early-stopped run still **skips** contract validation. Those
+are the two conditionals that were touched, so they are the two that could
+silently regress an existing user.
 
 Unit tests cannot exercise the real Actions plumbing, so
 `.github/workflows/e2e.yml` gains a 2-shard-plus-merge run against
