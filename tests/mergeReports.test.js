@@ -67,6 +67,25 @@ describe('mergeRunReports', () => {
     expect(merged.discovery).toEqual({ totalTests: 3, fingerprint: FINGERPRINT });
   });
 
+  // Locks the documented first-wins semantics. These fields are invariant across
+  // valid shards by construction, so nothing upstream distinguishes first from
+  // last — only this test does.
+  it('takes discovery, selection, handlers and contracts.configured from the first report', () => {
+    const first = makeReport(1, { totalTests: 3 });
+    const second = makeReport(2, { totalTests: 3 });
+    second.discovery = { ...second.discovery, totalTests: 99 };
+    second.selection = { filters: ['not-the-first'] };
+    second.handlers = [{ id: 'other', name: 'Other', parent: null, type: 'suite' }];
+    second.contracts = { ...second.contracts, configured: false };
+
+    const merged = mergeRunReports([first, second]);
+
+    expect(merged.discovery.totalTests).toBe(3);
+    expect(merged.selection).toEqual({ filters: [] });
+    expect(merged.handlers).toEqual(HANDLERS);
+    expect(merged.contracts.configured).toBe(true);
+  });
+
   // The property that proves nothing is lost or doubled. It only holds because
   // completeness is checked outside this function.
   it('is associative', () => {

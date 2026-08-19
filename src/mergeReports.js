@@ -72,7 +72,10 @@ export function mergeRunReports(reports) {
     shards: [...shards].sort((a, b) => a.index - b.index),
     discovery: first.discovery,
     selection: first.selection,
-    // Identical across shards, guaranteed by the fingerprint check above.
+    // Invariant across shards in practice: every shard enumerates the same app.
+    // Not proven by the fingerprint, which covers the ordered test-id list and
+    // the filters, not handler metadata. Taking the first is the documented
+    // contract, pinned by a test.
     handlers: first.handlers,
     tests,
     contracts: {
