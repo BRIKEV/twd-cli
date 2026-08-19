@@ -11,6 +11,9 @@ import { selectTestIds } from './filterTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
+import { selectShardIds } from './shard.js';
+import { buildRunReport } from './runReport.js';
+import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
 import {
   assertFfmpegAvailable,
   applyRecordingFraming,
@@ -43,7 +46,8 @@ function recordedFileSize(absPath) {
 }
 
 export async function runTests(options = {}) {
-  const { testFilters = [], recordOverrides = {} } = options;
+  const { testFilters = [], recordOverrides = {}, shard = null, reportDir = null } = options;
+  const sharded = Boolean(shard);
   let browser;
   let config;
   let startedAt = null;
@@ -52,6 +56,7 @@ export async function runTests(options = {}) {
   let recorder = null;
   let recordOutput = null;
   let recordOutputPath = null;
+  let recordingInfo = null;
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
@@ -161,7 +166,22 @@ export async function runTests(options = {}) {
     }
 
     // Resolve the ordered id list to run: the filter result, or all tests.
-    const baseIds = selectedIds ?? orderedTestIds(registeredHandlers);
+    //
+    // allTestIds is the full ordered list, before filtering or slicing. This is
+    // what the fingerprint hashes and what discovery.totalTests reports, so
+    // every shard agrees on it regardless of which slice it took.
+    const allTestIds = orderedTestIds(registeredHandlers);
+    const filteredIds = selectedIds ?? allTestIds;
+    const baseIds = sharded
+      ? selectShardIds(filteredIds, shard.index, shard.total)
+      : filteredIds;
+
+    if (sharded) {
+      console.log(
+        `Shard ${shard.index}/${shard.total}: running ${baseIds.length} of ${filteredIds.length} test(s).`
+      );
+    }
+
     const chunks = chunk(baseIds, config.chunkSize);
 
     // Recording starts here, not earlier: the output path is fixed up front by
@@ -274,12 +294,14 @@ export async function runTests(options = {}) {
           'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
         );
       } else {
+        recordingInfo = { file: recordOutput, bytes: recordedFileSize(recordOutputPath) };
         console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
       }
     }
 
     const testStatus = partialStatus;
-    const durationMs = Date.now() - startedAt;
+    const endedAt = Date.now();
+    const durationMs = endedAt - startedAt;
     const notRun = baseIds.length - executed;
 
     // Exit with appropriate code
@@ -292,8 +314,19 @@ export async function runTests(options = {}) {
       }
     }
 
-    // Contract validation (skipped on an early stop — the data is partial)
-    if (!stoppedEarly && config.contracts && config.contracts.length > 0) {
+    // Contract validation. A sharded run validates even after an early stop and
+    // flags the result partial, so merge can say exactly what is missing rather
+    // than silently dropping a shard's worth of mocks. A non-sharded run keeps
+    // skipping, exactly as before.
+    const contractsConfigured = Boolean(config.contracts && config.contracts.length > 0);
+    let contractsBlock = {
+      configured: contractsConfigured,
+      partial: false,
+      results: [],
+      skipped: [],
+    };
+
+    if (contractsConfigured && (sharded || !stoppedEarly)) {
       if (collectedMocks.size === 0) {
         console.log('\nNo mocks collected — ensure twd-js supports contract collection');
       }
@@ -303,44 +336,76 @@ export async function runTests(options = {}) {
         hasFailures = true;
       }
 
-      // Write markdown report for CI/PR integration
-      if (config.contractReportPath) {
+      contractsBlock = {
+        configured: true,
+        partial: stoppedEarly,
+        results: validationOutput.results,
+        skipped: validationOutput.skipped,
+      };
+
+      if (stoppedEarly) {
+        console.log('\n⚠ Contract data is partial — this shard stopped early.');
+      }
+
+      // Write markdown report for CI/PR integration.
+      //
+      // Only a whole run produces a meaningful markdown report. Under sharding
+      // each shard would overwrite the others with a quarter of the picture, so
+      // `merge` writes it instead.
+      if (config.contractReportPath && !sharded) {
         const reportPath = path.resolve(workingDir, config.contractReportPath);
-        const reportDir = path.dirname(reportPath);
-        if (!fs.existsSync(reportDir)) {
-          fs.mkdirSync(reportDir, { recursive: true });
+        const reportDirPath = path.dirname(reportPath);
+        if (!fs.existsSync(reportDirPath)) {
+          fs.mkdirSync(reportDirPath, { recursive: true });
         }
         const markdown = generateContractMarkdown(validationOutput);
         fs.writeFileSync(reportPath, markdown);
         console.log(`Contract report written to ${config.contractReportPath}`);
       }
-    } else if (stoppedEarly && config.contracts && config.contracts.length > 0) {
+    } else if (contractsConfigured && stoppedEarly) {
       console.log('\nSkipping contract validation — run stopped early (partial data).');
     }
 
-    // Handle code coverage if enabled (skipped when a --test filter is active)
+    // Handle code coverage if enabled.
+    //
+    // The filter gate is unchanged: a --test filter still suppresses coverage,
+    // because a filtered run's number is a misleading project-wide figure. A
+    // shard slice is not a filter.
+    //
+    // The failure gate is relaxed for sharded runs only. hasFailures is per
+    // shard, so applying it here would let three green shards write coverage
+    // while a red fourth writes none — a merged report that looks complete but
+    // is missing a quarter of the code paths. `merge` applies the gate to the
+    // true global result instead.
     if (selectedIds && config.coverage) {
       console.log('Skipping coverage collection (test filter active).');
     }
-    if (config.coverage && !hasFailures && !selectedIds) {
-      const coverage = await page.evaluate(() => window.__coverage__);
-      if (coverage) {
-        const coverageDir = path.resolve(workingDir, config.coverageDir);
-        const nycDir = path.resolve(workingDir, config.nycOutputDir);
 
-        if (!fs.existsSync(nycDir)) {
-          fs.mkdirSync(nycDir, { recursive: true });
-        }
-        if (!fs.existsSync(coverageDir)) {
-          fs.mkdirSync(coverageDir, { recursive: true });
-        }
-
-        const coveragePath = path.join(nycDir, 'out.json');
-        fs.writeFileSync(coveragePath, JSON.stringify(coverage));
-        console.log(`Code coverage data written to ${coveragePath}`);
-      } else {
+    let coverageData = null;
+    if (config.coverage && !selectedIds && (sharded || !hasFailures)) {
+      coverageData = await page.evaluate(() => window.__coverage__);
+      if (!coverageData) {
         console.log('No code coverage data found.');
       }
+    }
+
+    // A sharded run's coverage goes to the report dir and nowhere else. Writing
+    // it to .nyc_output/out.json — the path nyc reads by default — would let one
+    // shard's partial data masquerade as the whole run's.
+    if (coverageData && !sharded) {
+      const coverageDir = path.resolve(workingDir, config.coverageDir);
+      const nycDir = path.resolve(workingDir, config.nycOutputDir);
+
+      if (!fs.existsSync(nycDir)) {
+        fs.mkdirSync(nycDir, { recursive: true });
+      }
+      if (!fs.existsSync(coverageDir)) {
+        fs.mkdirSync(coverageDir, { recursive: true });
+      }
+
+      const coveragePath = path.join(nycDir, 'out.json');
+      fs.writeFileSync(coveragePath, JSON.stringify(coverageData));
+      console.log(`Code coverage data written to ${coveragePath}`);
     }
 
     await browser.close();
@@ -355,6 +420,31 @@ export async function runTests(options = {}) {
       stoppedEarly,
       maxFailures: config.maxFailures,
     }));
+
+    // Written last, and only for a sharded run. A run that threw never gets
+    // here on purpose: its artifact stays absent, and `merge` reports the gap as
+    // "a shard job likely failed before uploading", which is the accurate
+    // diagnosis. A half-written report would be a worse lie.
+    if (sharded) {
+      const dir = reportDir ?? DEFAULT_REPORT_DIR;
+      const report = buildRunReport({
+        shard,
+        startedAt,
+        endedAt,
+        allTestIds,
+        filters: testFilters,
+        handlers,
+        tests: testStatus,
+        executed,
+        notRun,
+        stoppedEarly,
+        coverageFile: coverageData ? COVERAGE_FILE : null,
+        recording: recordingInfo,
+        contracts: contractsBlock,
+      });
+      const { reportPath } = writeRunReport(dir, report, coverageData);
+      console.log(`Shard report written to ${reportPath}`);
+    }
 
     return hasFailures;
 
