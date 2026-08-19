@@ -105,7 +105,7 @@ both, and makes a normal run the N=1 case with no second code path.
       "recording": { "file": "login.mp4", "bytes": 481920 } }
   ],
   "discovery": { "totalTests": 120, "fingerprint": "sha256:abc123..." },
-  "selection": { "mode": "shard", "filters": [] },
+  "selection": { "filters": [] },
   "handlers": [ { "id": "...", "name": "...", "parent": "...", "type": "test" } ],
   "tests":    [ { "id": "...", "status": "pass", "retryAttempt": 2 } ],
   "contracts": { "configured": true, "partial": false, "results": [], "skipped": [] }
@@ -117,9 +117,9 @@ both, and makes a normal run the N=1 case with no second code path.
 `generateContractMarkdown` need no data massaging. `contracts` is
 `validateMocks()`'s return value verbatim plus two flags.
 
-`selection.mode` is `"full"` or `"shard"`. `selection.filters` holds the `--test`
-values. The two compose: filters resolve first, then the filtered list is
-sharded.
+`selection.filters` holds the `--test` values. Filters and shards compose:
+filters resolve first, then the filtered list is sharded. There is no companion
+`mode` field — a report only exists under `--shard`, so it would be a constant.
 
 Coverage is **referenced, not embedded** — `coverageFile` names a sibling file.
 This keeps `run.json` readable by eye and keeps coverage in stock Istanbul
@@ -178,9 +178,9 @@ the true global result.
 Where coverage lands depends on whether reporting is active, and the two paths
 are mutually exclusive on purpose:
 
-- **Without `--report`** (today's normal run): `.nyc_output/out.json`, exactly as
+- **Without `--shard`** (today's normal run): `.nyc_output/out.json`, exactly as
   now. The only change is that a failing run writes it too.
-- **With `--report` or `--shard`**: `<report-dir>/coverage.json` only. It is
+- **With `--shard`**: `<report-dir>/coverage.json` only. It is
   deliberately *not* also written to `.nyc_output/out.json`, because one shard's
   partial coverage sitting at the path `nyc` reads by default would masquerade as
   the whole run's. Under sharding, `.nyc_output/out.json` is written by `merge`
@@ -193,8 +193,15 @@ failure gate.
 
 Cross-job coordination is impossible without an external store, so each shard
 gets the full `maxFailures` budget (default 10) independently. Four shards can
-therefore accumulate up to 40 failures before all four bail. This is documented,
-not fixed.
+therefore accumulate up to 40 failures before all four bail.
+
+This is documented, not fixed, and the reason it is acceptable is that the
+budget exists to stop CI burning time on a fundamentally broken app — with the
+suite already divided N ways, each shard reaches its own limit fast enough that
+the extra wasted time is not noticeable. Dividing the budget instead
+(`ceil(maxFailures / total)`) was considered and rejected: a shard stopping at 3
+failures is hard to explain from its own log, and it makes the CLI depend on the
+shard count to compute a threshold.
 
 A shard that bails no longer skips contract validation. Today `stoppedEarly`
 skips it outright (`src/index.js:296`, `:317`); instead it validates what it
@@ -268,16 +275,20 @@ report object. Less churn, and the formatter stays dumb.
 ## CLI flags
 
 ```
-npx twd-cli run --shard 2/4        # implies --report
-npx twd-cli run --report           # write artifacts without sharding (N=1)
+npx twd-cli run --shard 2/4        # a shard; writes a report
+npx twd-cli run --shard 1/1        # the non-sharded case: one shard, one report
 npx twd-cli run --report-dir <p>   # default .twd/run
 npx twd-cli merge <dir>
 npx twd-cli merge <dir> --out <p>  # default .twd/merged-run.json
 ```
 
-Report writing is off by default for plain runs, so no existing run starts
-littering the working tree. `--shard` implies `--report`, since a shard that
-writes nothing is useless.
+Report writing is driven entirely by `--shard`, so no existing run starts
+littering the working tree. There is deliberately no separate `--report` flag:
+a shard that writes nothing is useless, so the report is a property of sharding,
+and `--shard 1/1` already expresses "one shard, write its report". A dedicated
+`--report` would add a second flag, an implication rule to document and test,
+and a third code path in `parseArgs` for something no consumer needs yet. It is
+a one-line addition later if one turns up.
 
 Each flag accepts both `--flag value` and `--flag=value`, matching the existing
 `readValue` helper in `src/parseArgs.js`.
