@@ -100,7 +100,7 @@ both, and makes a normal run the N=1 case with no second code path.
       "startedAt": "2026-08-19T10:00:00.000Z",
       "endedAt":   "2026-08-19T10:00:12.345Z",
       "durationMs": 12345,
-      "executed": 30, "notRun": 0, "stoppedEarly": false,
+      "executed": 30, "notRun": 0, "failed": 0, "stoppedEarly": false,
       "coverageFile": "coverage.json",
       "recording": { "file": "login.mp4", "bytes": 481920 } }
   ],
@@ -116,6 +116,11 @@ both, and makes a normal run the N=1 case with no second code path.
 `src/index.js:128` and `:226`, so `buildTestPath`, `formatRunComplete` and
 `generateContractMarkdown` need no data massaging. `contracts` is
 `validateMocks()`'s return value verbatim plus two flags.
+
+Each shard descriptor carries its own `failed` count. Merged `tests` do not
+record which shard ran them, so without it the per-shard breakdown line
+(`Shards: 1 ✓30 | 2 ✗30 | ...`) could not be rendered — and knowing *which*
+shard went red is most of that line's value.
 
 `selection.filters` holds the `--test` values. Filters and shards compose:
 filters resolve first, then the filtered list is sharded. There is no companion
