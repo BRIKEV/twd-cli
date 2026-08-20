@@ -1,3 +1,19 @@
+## <small>1.5.0-beta.0 (2026-08-19)</small>
+
+* feat(shard): `--shard <i>/<n>` runs one slice of the suite so a run can be split across parallel CI jobs. Each shard discovers the whole suite itself and takes every nth test, so the test count never has to be known in advance
+* feat(shard): a sharded run writes `run.json` and `coverage.json` to `./.twd/run` (`--report-dir` to change it) — the first machine-readable output twd-cli has had
+* feat(merge): `npx twd-cli merge <dir>` joins shard reports into one report covering test results, coverage and contract validation, prints a single summary with a per-shard breakdown, and owns the exit code
+* feat(merge): a missing shard report is an error naming the gap, not a silently incomplete report. Shards also fingerprint the test list they discovered, so shards that saw different test sets refuse to merge
+* note: no behavior change without `--shard`. A plain run writes the same files, prints the same output, and exits the same way as 1.4.0
+
+Sharding needs three things right in the workflow: `fail-fast: false` on the
+matrix, `if: always()` on the shard's artifact upload, and
+`if: ${{ !cancelled() }}` on the merge job. See "Sharding across CI jobs" in the
+README.
+
+This is a prerelease, published under the `beta` dist-tag:
+`npm install twd-cli@beta`.
+
 ## <small>1.4.0 (2026-07-28)</small>
 
 * feat(record): video recording for twd-cli runs (#13) ([94c21e0](https://github.com/BRIKEV/twd-cli/commit/94c21e0)), closes [#13](https://github.com/BRIKEV/twd-cli/issues/13)
