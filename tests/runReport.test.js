@@ -4,7 +4,11 @@ import { buildRunReport, fingerprintTests, REPORT_SCHEMA_VERSION } from '../src/
 const handlers = [
   { id: 's1', name: 'Login', parent: null, type: 'suite' },
   { id: 't1', name: 'works', parent: 's1', type: 'test' },
+  { id: 't2', name: 'also works', parent: 's1', type: 'test' },
+  { id: 't3', name: 'still works', parent: 's1', type: 'test' },
 ];
+
+const PATHS = ['Login > works', 'Login > also works', 'Login > still works'];
 
 function build(overrides = {}) {
   return buildRunReport({
@@ -33,11 +37,11 @@ describe('fingerprintTests', () => {
 
   // Order matters: round-robin slicing is only correct if every shard sees the
   // same list in the same order.
-  it('changes when the id order changes', () => {
+  it('changes when the path order changes', () => {
     expect(fingerprintTests(['a', 'b'])).not.toBe(fingerprintTests(['b', 'a']));
   });
 
-  it('changes when the id set changes', () => {
+  it('changes when the path set changes', () => {
     expect(fingerprintTests(['a', 'b'])).not.toBe(fingerprintTests(['a', 'b', 'c']));
   });
 
@@ -88,13 +92,50 @@ describe('buildRunReport', () => {
   it('records total discovered tests and the fingerprint', () => {
     const report = build();
     expect(report.discovery.totalTests).toBe(3);
-    expect(report.discovery.fingerprint).toBe(fingerprintTests(['t1', 't2', 't3'], []));
+    expect(report.discovery.fingerprint).toBe(fingerprintTests(PATHS, []));
   });
 
-  it('carries handlers and tests through untouched', () => {
-    const report = build();
-    expect(report.handlers).toEqual(handlers);
-    expect(report.tests).toEqual([{ id: 't1', status: 'pass' }]);
+  // The whole point of the path-based fingerprint: twd-js ids are Math.random()
+  // per page load, so two shards of the same suite never agree on ids. If the
+  // fingerprint were keyed on them, merge would reject every correct run.
+  it('fingerprints the same suite identically when the ids differ', () => {
+    const shardTwoHandlers = handlers.map((h) => ({
+      ...h,
+      id: `x${h.id}`,
+      parent: h.parent ? `x${h.parent}` : h.parent,
+    }));
+    const shardTwo = build({
+      allTestIds: ['xt1', 'xt2', 'xt3'],
+      handlers: shardTwoHandlers,
+      tests: [{ id: 'xt1', status: 'pass' }],
+    });
+    expect(shardTwo.discovery.fingerprint).toBe(build().discovery.fingerprint);
+  });
+
+  it('carries handlers through untouched', () => {
+    expect(build().handlers).toEqual(handlers);
+  });
+
+  // path is for display, index is for identity. See buildRunReport.
+  it('stamps each test with its resolved path and its position in the order', () => {
+    expect(build({ tests: [{ id: 't3', status: 'fail', error: 'boom' }] }).tests).toEqual([
+      { id: 't3', status: 'fail', error: 'boom', path: 'Login > still works', index: 2 },
+    ]);
+  });
+
+  // Positions are shard-independent, so a merged report can detect a genuine
+  // overlap with them where random ids proved nothing.
+  it('numbers positions from the full ordered list, not the shard slice', () => {
+    const report = build({
+      tests: [{ id: 't2', status: 'pass' }, { id: 't3', status: 'pass' }],
+    });
+    expect(report.tests.map((t) => t.index)).toEqual([1, 2]);
+  });
+
+  // Renderers fall back on a null path; inventing one would be worse.
+  it('leaves path null and index null when the handler is missing', () => {
+    const report = build({ tests: [{ id: 'ghost', status: 'pass' }] });
+    expect(report.tests[0]).toEqual({ id: 'ghost', status: 'pass', path: null, index: null });
   });
 
   it('copies the filters rather than aliasing them', () => {
@@ -102,6 +143,18 @@ describe('buildRunReport', () => {
     const report = build({ filters });
     filters.push('Cart');
     expect(report.selection.filters).toEqual(['Login']);
+  });
+
+  // What executed + notRun has to add up to. With --test active this is smaller
+  // than discovery.totalTests, and comparing against the latter reported a
+  // shard-slicing bug on every correct filtered run.
+  it('records the filtered count the shards divided', () => {
+    expect(build({ filteredIds: ['t2', 't3'], filters: ['works'] }).selection.selectedTests)
+      .toBe(2);
+  });
+
+  it('falls back to the whole suite when no filter is active', () => {
+    expect(build().selection.selectedTests).toBe(3);
   });
 
   it('defaults contracts to an unconfigured empty block', () => {

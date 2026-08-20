@@ -120,7 +120,7 @@ export function runMerge({ dir, out = null } = {}) {
   if (!totals.consistent) {
     console.warn(
       `Warning: shard totals do not add up — ${totals.executed} executed + ` +
-      `${totals.notRun} not run != ${merged.discovery.totalTests} discovered. ` +
+      `${totals.notRun} not run != ${totals.expected} selected. ` +
       'This points at a shard-slicing bug, not at your tests.'
     );
   }

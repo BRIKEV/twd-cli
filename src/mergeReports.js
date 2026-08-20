@@ -1,3 +1,5 @@
+import { REPORT_SCHEMA_VERSION } from './runReport.js';
+
 /**
  * Combines shard reports into one report of the same shape.
  *
@@ -20,6 +22,17 @@ export function mergeRunReports(reports) {
     throw new Error(
       `Shard reports disagree on schemaVersion (${versions.sort().join(', ')}). ` +
       'Every shard job must run the same twd-cli version.'
+    );
+  }
+
+  // Agreement is not enough. Reports from a newer twd-cli agree with each other
+  // and would be merged by an older binary against a schema it does not
+  // understand — the exact silent mis-merge the field exists to prevent.
+  if (versions[0] !== REPORT_SCHEMA_VERSION) {
+    throw new Error(
+      `Shard reports use report schema v${versions[0]}, but this twd-cli reads ` +
+      `v${REPORT_SCHEMA_VERSION}. Every shard job and the merge job must run the ` +
+      'same twd-cli version.'
     );
   }
 
@@ -50,16 +63,25 @@ export function mergeRunReports(reports) {
     byIndex.add(shard.index);
   }
 
+  // Overlap is detected on tests[].index — the test's position in the discovered
+  // order — not on tests[].id. twd-js ids are Math.random() per page load, so
+  // every shard invents its own and an id-keyed check can never fire: it looked
+  // like a guard while proving nothing. Position is deterministic, so it is a
+  // real one. The path cannot be the key either: duplicate test names share a
+  // path and may legally land in different shards.
   const tests = [];
-  const testIds = new Set();
+  const positions = new Set();
   for (const report of reports) {
     for (const test of report.tests) {
-      if (testIds.has(test.id)) {
-        throw new Error(
-          `Test id "${test.id}" appears in more than one shard — the shard slices overlap.`
-        );
+      if (test.index != null) {
+        if (positions.has(test.index)) {
+          throw new Error(
+            `Test "${test.path ?? test.id}" (position ${test.index}) appears in more ` +
+            'than one shard — the shard slices overlap.'
+          );
+        }
+        positions.add(test.index);
       }
-      testIds.add(test.id);
       tests.push(test);
     }
   }
@@ -72,9 +94,10 @@ export function mergeRunReports(reports) {
     shards: [...shards].sort((a, b) => a.index - b.index),
     discovery: first.discovery,
     selection: first.selection,
-    // Invariant across shards in practice: every shard enumerates the same app.
-    // Not proven by the fingerprint, which covers the ordered test-id list and
-    // the filters, not handler metadata. Taking the first is the documented
+    // Only the first shard's map, and only its own ids resolve in it — twd-js
+    // ids are per-page-load random. That is why every test carries its own
+    // resolved `path` and renderers prefer it; this stays for the ids it can
+    // still explain and for diagnostics. Taking the first is the documented
     // contract, pinned by a test.
     handlers: first.handlers,
     tests,
@@ -125,9 +148,16 @@ export function reportTimings(report) {
 export function reportTotals(report) {
   const executed = report.shards.reduce((sum, s) => sum + s.executed, 0);
   const notRun = report.shards.reduce((sum, s) => sum + s.notRun, 0);
+  // Against the count the shards divided, not everything discovered. With
+  // --test active those differ by every excluded test, and comparing to
+  // discovery.totalTests reported a slicing bug on a correct run. The fallback
+  // is unreachable for a v2 report; it only keeps a hand-built one from
+  // comparing against undefined and always warning.
+  const expected = report.selection?.selectedTests ?? report.discovery.totalTests;
   return {
     executed,
     notRun,
-    consistent: executed + notRun === report.discovery.totalTests,
+    expected,
+    consistent: executed + notRun === expected,
   };
 }

@@ -1,5 +1,20 @@
 import { buildTestPath } from './buildTestPath.js';
 
+/**
+ * Display name for one test result.
+ *
+ * `entry.path` is preferred because it was resolved inside the shard that ran
+ * the test, where the handler map was valid. A merged report keeps only the
+ * first shard's handlers, and twd-js ids are random per page load, so
+ * buildTestPath cannot resolve anything from shards 2..n — every failure would
+ * print a bare random id in the one place the merge exists to produce. The
+ * buildTestPath call stays for a live, non-sharded run, whose entries carry no
+ * path.
+ */
+function resolvePath(entry, handlers) {
+  return entry.path ?? buildTestPath(entry.id, handlers) ?? entry.id;
+}
+
 export function formatRunComplete({
   testStatus,
   handlers,
@@ -38,7 +53,7 @@ export function formatRunComplete({
   if (failures.length > 0) {
     lines.push('', `  Failed tests (${failures.length}):`);
     for (const failure of failures) {
-      const testPath = buildTestPath(failure.id, handlers) ?? failure.id;
+      const testPath = resolvePath(failure, handlers);
       lines.push(`    × ${testPath}`);
       if (failure.error) {
         lines.push(`      ${String(failure.error).replace(/\n/g, '\n      ')}`);
@@ -50,7 +65,7 @@ export function formatRunComplete({
   if (retried.length > 0) {
     lines.push('', `  Retried (${retried.length}):`);
     for (const t of retried) {
-      const testPath = buildTestPath(t.id, handlers) ?? t.id;
+      const testPath = resolvePath(t, handlers);
       lines.push(`    ✓ ${testPath} (passed on attempt ${t.retryAttempt})`);
     }
   }

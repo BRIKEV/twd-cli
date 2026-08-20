@@ -25,6 +25,41 @@ describe('formatRunComplete', () => {
     );
   });
 
+  // A merged report keeps only the first shard's handlers, and twd-js ids are
+  // random per page load, so a later shard's failure cannot be resolved from
+  // them — it used to print as a raw id in the merged summary. Each entry now
+  // carries the path its own shard resolved.
+  it('prefers the path the shard resolved over its own handler lookup', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 'k3j2h1g9d', path: 'Cart > removes an item', status: 'fail', error: 'boom' },
+        { id: 'z9y8x7w6v', path: 'Cart > applies a coupon', status: 'pass', retryAttempt: 2 },
+      ],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(block).toContain('× Cart > removes an item');
+    expect(block).toContain('✓ Cart > applies a coupon (passed on attempt 2)');
+    expect(block).not.toContain('k3j2h1g9d');
+    expect(block).not.toContain('z9y8x7w6v');
+  });
+
+  // A live non-sharded run carries no path, and a null path is a legal value.
+  it('falls back to the handler lookup, then the raw id', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'a' },
+        { id: 't2', path: null, status: 'fail', error: 'b' },
+        { id: 'ghost', status: 'fail', error: 'c' },
+      ],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(block).toContain('× Login > shows error on wrong password');
+    expect(block).toContain('× Login > redirects on success');
+    expect(block).toContain('× ghost');
+  });
+
   it('counts skipped tests', () => {
     const block = formatRunComplete({
       testStatus: [

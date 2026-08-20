@@ -13,6 +13,7 @@ import { loadConfig } from '../src/config.js';
 import { printContractReport } from '../src/contractReport.js';
 import { readShardReports, readShardCoverage } from '../src/reportFiles.js';
 import { runMerge } from '../src/mergeCommand.js';
+import { REPORT_SCHEMA_VERSION } from '../src/runReport.js';
 
 const HANDLERS = [
   { id: 's1', name: 'Login', parent: null, type: 'suite' },
@@ -20,10 +21,19 @@ const HANDLERS = [
   { id: 't2', name: 'b', parent: 's1', type: 'test' },
 ];
 
+// Only shard 1's ids exist in HANDLERS, matching reality: twd-js mints ids with
+// Math.random() at registration, so each shard's browser invents its own. Every
+// entry carries the path its own shard resolved, plus its position in the
+// discovered order as the cross-shard identity.
 function shardReport(index, overrides = {}) {
-  const { total = 2, tests = [{ id: `t${index}`, status: 'pass' }], failed = 0 } = overrides;
+  const {
+    total = 2,
+    tests = [{ id: index === 1 ? 't1' : `r${index}-x`, path: `Login > ${'ab'[index - 1]}`, index: index - 1, status: 'pass' }],
+    failed = 0,
+    selectedTests = 2,
+  } = overrides;
   return {
-    schemaVersion: 1,
+    schemaVersion: REPORT_SCHEMA_VERSION,
     shards: [{
       index, total,
       startedAt: `2026-08-19T10:00:0${index}.000Z`,
@@ -33,7 +43,7 @@ function shardReport(index, overrides = {}) {
       stoppedEarly: false, coverageFile: 'coverage.json', recording: null,
     }],
     discovery: { totalTests: 2, fingerprint: 'sha256:same' },
-    selection: { filters: [] },
+    selection: { filters: [], selectedTests },
     handlers: HANDLERS,
     tests,
     contracts: { configured: false, partial: false, results: [], skipped: [] },
@@ -122,7 +132,7 @@ describe('runMerge', () => {
     const call = vi.mocked(fs.writeFileSync).mock.calls
       .find(([f]) => String(f).endsWith('merged-run.json'));
     const merged = JSON.parse(String(call[1]));
-    expect(merged.tests.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(merged.tests.map((t) => t.index)).toEqual([0, 1]);
     expect(merged.shards.map((s) => s.index)).toEqual([1, 2]);
   });
 
@@ -236,14 +246,11 @@ describe('runMerge', () => {
     expect(writtenFiles().some((f) => f.endsWith('contract-report.md'))).toBe(true);
   });
 
-  // Executed + not-run has to account for every discovered test. When it does
+  // Executed + not-run has to account for every selected test. When it does
   // not, the shard math dropped tests on the floor and nothing else would say so.
-  it('warns when the shard totals do not account for every discovered test', () => {
+  it('warns when the shard totals do not account for every selected test', () => {
     const warn = vi.spyOn(console, 'warn');
-    const wrongTotal = (i) => ({
-      ...shardReport(i),
-      discovery: { totalTests: 3, fingerprint: 'sha256:same' },
-    });
+    const wrongTotal = (i) => shardReport(i, { selectedTests: 3 });
     vi.mocked(readShardReports).mockReturnValue([
       { dir: 'a', report: wrongTotal(1) },
       { dir: 'b', report: wrongTotal(2) },
@@ -252,6 +259,27 @@ describe('runMerge', () => {
     runMerge({ dir: '.twd/shards' });
 
     expect(warn.mock.calls.flat().join('\n')).toMatch(/shard totals do not add up/);
+  });
+
+  // The false alarm this replaces: a --test filter narrows what the shards
+  // divide, so a correct filtered run has executed + notRun below
+  // discovery.totalTests and used to be reported as a shard-slicing bug.
+  it('does not warn when a filter narrowed what the shards divided', () => {
+    const warn = vi.spyOn(console, 'warn');
+    const filtered = (i) => {
+      const report = shardReport(i);
+      report.discovery = { totalTests: 40, fingerprint: 'sha256:same' };
+      report.selection = { filters: ['Login'], selectedTests: 2 };
+      return report;
+    };
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: filtered(1) },
+      { dir: 'b', report: filtered(2) },
+    ]);
+
+    runMerge({ dir: '.twd/shards' });
+
+    expect(warn.mock.calls.flat().join('\n')).not.toMatch(/do not add up/);
   });
 
   it('prints the merged run-complete block with a shard breakdown', () => {
@@ -266,5 +294,50 @@ describe('runMerge', () => {
     const output = log.mock.calls.flat().join('\n');
     expect(output).toContain('--- Run complete ---');
     expect(output).toContain('Shards: 1 ✓1 | 2 ✓1');
+  });
+
+  // The merged summary is the one output the merge exists to produce, and a
+  // failure from any shard but the first used to render as a raw random id: the
+  // merged report keeps only shard 1's handlers, which cannot resolve shard 2's
+  // ids. Each entry now carries the path its own shard resolved.
+  it('names failed tests from later shards instead of printing their raw ids', () => {
+    const log = vi.spyOn(console, 'log');
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: shardReport(1) },
+      {
+        dir: 'b',
+        report: shardReport(2, {
+          failed: 1,
+          tests: [{ id: 'k3j2h1g9d', path: 'Login > b', index: 1, status: 'fail', error: 'boom' }],
+        }),
+      },
+    ]);
+
+    const hasFailures = runMerge({ dir: '.twd/shards' });
+
+    const output = log.mock.calls.flat().join('\n');
+    expect(hasFailures).toBe(true);
+    expect(output).toContain('× Login > b');
+    expect(output).not.toContain('k3j2h1g9d');
+  });
+
+  // Retried tests render through the same path resolution.
+  it('names retried tests from later shards', () => {
+    const log = vi.spyOn(console, 'log');
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: shardReport(1) },
+      {
+        dir: 'b',
+        report: shardReport(2, {
+          tests: [{ id: 'zzzflaky', path: 'Login > b', index: 1, status: 'pass', retryAttempt: 2 }],
+        }),
+      },
+    ]);
+
+    runMerge({ dir: '.twd/shards' });
+
+    const output = log.mock.calls.flat().join('\n');
+    expect(output).toContain('✓ Login > b (passed on attempt 2)');
+    expect(output).not.toContain('zzzflaky');
   });
 });

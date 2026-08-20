@@ -167,9 +167,11 @@ export async function runTests(options = {}) {
 
     // Resolve the ordered id list to run: the filter result, or all tests.
     //
-    // allTestIds is the full ordered list, before filtering or slicing. This is
-    // what the fingerprint hashes and what discovery.totalTests reports, so
-    // every shard agrees on it regardless of which slice it took.
+    // allTestIds is the full ordered list, before filtering or slicing. Its
+    // order is what the fingerprint covers (as paths — the ids themselves are
+    // random per page load) and its length is discovery.totalTests, so every
+    // shard agrees on both regardless of which slice it took. filteredIds is
+    // the list the shards divide, so it is what executed + notRun must total.
     const allTestIds = orderedTestIds(registeredHandlers);
     const filteredIds = selectedIds ?? allTestIds;
     const baseIds = sharded
@@ -327,7 +329,11 @@ export async function runTests(options = {}) {
     };
 
     if (contractsConfigured && (sharded || !stoppedEarly)) {
-      if (collectedMocks.size === 0) {
+      // Never under sharding. A shard whose slice exercised no mocks — and any
+      // shard with an empty slice — collects nothing, which is normal, so this
+      // would advertise a twd-js version problem that does not exist on the
+      // happy path of every sharded CI run.
+      if (collectedMocks.size === 0 && !sharded) {
         console.log('\nNo mocks collected — ensure twd-js supports contract collection');
       }
       const validationOutput = validateMocks(collectedMocks, contractValidators);
@@ -432,6 +438,7 @@ export async function runTests(options = {}) {
         startedAt,
         endedAt,
         allTestIds,
+        filteredIds,
         filters: testFilters,
         handlers,
         tests: testStatus,

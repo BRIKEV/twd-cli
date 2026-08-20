@@ -4,6 +4,7 @@
 * feat(shard): a sharded run writes `run.json` and `coverage.json` to `./.twd/run` (`--report-dir` to change it) — the first machine-readable output twd-cli has had
 * feat(merge): `npx twd-cli merge <dir>` joins shard reports into one report covering test results, coverage and contract validation, prints a single summary with a per-shard breakdown, and owns the exit code
 * feat(merge): a missing shard report is an error naming the gap, not a silently incomplete report. Shards also fingerprint the test list they discovered, so shards that saw different test sets refuse to merge
+* chore(packaging): a `files` allowlist in package.json — the published package is now just `bin/`, `src/`, `README.md`, `CHANGELOG.md` and `LICENSE`. `tests/`, `test-example-app/`, `docs/` and the repo tooling were all being published and no longer are, taking the tarball from ~209 kB to ~33 kB (99 files to 25, ~850 kB to ~101 kB unpacked). Nothing that was importable before has moved
 * note: no behavior change without `--shard`. A plain run writes the same files, prints the same output, and exits the same way as 1.4.0
 
 Sharding needs three things right in the workflow: `fail-fast: false` on the

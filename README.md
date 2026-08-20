@@ -335,9 +335,11 @@ summary print at all.
   refuses and names the gap rather than silently reporting 3 of 4 shards as a
   complete green run.
 - **Tests must register identically in every job.** Each shard fingerprints the
-  test list it discovered and `merge` verifies they match. Registering tests
-  conditionally — behind a feature flag, a date, `Math.random()` — makes the
-  fingerprints diverge and `merge` will say so.
+  ordered list of `"suite > test"` paths it discovered and `merge` verifies they
+  match. Registering tests conditionally — behind a feature flag, a date,
+  `Math.random()` — makes the fingerprints diverge and `merge` will say so.
+  (Paths rather than internal test ids: `twd-js` assigns those at registration
+  time and they differ on every page load, so each shard's browser sees its own.)
 - **`maxFailures` is per shard.** Four shards at the default of 10 can reach 40
   failures between them before all four bail.
 - **`--test` and `--shard` compose:** filters resolve first, then the filtered list

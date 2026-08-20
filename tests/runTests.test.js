@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runTests } from "../src/index.js";
+import { REPORT_SCHEMA_VERSION } from "../src/runReport.js";
 
 vi.mock('fs');
 vi.mock('puppeteer');
@@ -1239,10 +1240,49 @@ describe('runTests sharding', () => {
 
     expect(fs.mkdirSync).toHaveBeenCalledWith('./.twd/run', { recursive: true });
     const report = runJson();
-    expect(report.schemaVersion).toBe(1);
+    expect(report.schemaVersion).toBe(REPORT_SCHEMA_VERSION);
     expect(report.shards[0]).toMatchObject({ index: 2, total: 2, executed: 2 });
     expect(report.discovery.totalTests).toBe(4);
     expect(report.tests.map((t) => t.id)).toEqual(['2', '4']);
+  });
+
+  // path is resolved here, in the shard that ran the test, because twd-js ids
+  // are random per page load: shard 2's ids do not exist in the handler map a
+  // merged report keeps, so the merged summary could not name these tests
+  // otherwise. index is the cross-shard identity — the same number in every
+  // shard, unlike the id.
+  it('stamps each result with its resolved path and its position in the order', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(runJson().tests).toEqual([
+      { id: '2', status: 'pass', path: 'b', index: 1 },
+      { id: '4', status: 'pass', path: 'd', index: 3 },
+    ]);
+  });
+
+  // The fingerprint is over paths, not ids, so two shards of the same suite
+  // agree on it even though their browsers minted entirely different ids. With
+  // ids it could never match and merge rejected every correct sharded run.
+  it('fingerprints identically across shards whose ids differ', async () => {
+    const { handlers, testStatus } = fourTests();
+    const first = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(first));
+    await runTests({ shard: { index: 1, total: 2 } });
+    const shardOne = runJson().discovery.fingerprint;
+
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    // Same suite, same order, all-new ids — exactly what a second browser does.
+    const relabeled = handlers.map((h) => ({ ...h, id: `x${h.id}` }));
+    const second = createMockPage({ handlers: relabeled, testStatus: [] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(second));
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(runJson().discovery.fingerprint).toBe(shardOne);
   });
 
   it('honors --report-dir', async () => {
@@ -1302,6 +1342,23 @@ describe('runTests sharding', () => {
     expect(runJson().shards[0].coverageFile).toBeNull();
     expect(runJson().selection.filters).toEqual(['a']);
   });
+
+  // Filters resolve first, so the shards divide the filtered list, and that is
+  // the count executed + notRun has to add up to. Recording the unfiltered
+  // total instead made merge print a shard-slicing warning on a correct run.
+  it('records the filtered count as the selection the shards divided', async () => {
+    const { handlers } = fourTests();
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 1, total: 2 }, testFilters: ['a'] });
+
+    const report = runJson();
+    expect(report.discovery.totalTests).toBe(4);
+    expect(report.selection.selectedTests).toBe(1);
+    expect(report.shards[0].executed + report.shards[0].notRun)
+      .toBe(report.selection.selectedTests);
+  });
 });
 
 describe('runTests non-regression: non-sharded behavior is unchanged', () => {
@@ -1360,6 +1417,26 @@ describe('runTests non-regression: non-sharded behavior is unchanged', () => {
     await runTests();
 
     expect(validateMocks).not.toHaveBeenCalled();
+  });
+
+  // The twd-js version hint gained a `&& !sharded` gate. A plain run with
+  // contracts configured and nothing collected really may be running a twd-js
+  // that cannot collect, so it must still say so.
+  it('still hints at twd-js when a non-sharded run collects no mocks', async () => {
+    const log = vi.spyOn(console, 'log');
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests();
+
+    expect(log.mock.calls.flat().join('\n')).toContain('No mocks collected');
   });
 
   // The markdown report gained a `&& !sharded` gate. A plain run must still
@@ -1432,6 +1509,29 @@ describe('runTests sharded behavior changes', () => {
     const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
     expect(files.some((f) => f.endsWith('contract-report.md'))).toBe(false);
     expect(files.some((f) => f.endsWith('run.json'))).toBe(true);
+  });
+
+  // A shard whose slice exercised no mocks — and any shard with an empty slice —
+  // collects nothing, which is normal. Printing the twd-js version hint there
+  // advertises a problem that does not exist, on the happy path of every
+  // sharded CI run.
+  it('does not hint at twd-js when a sharded run collects no mocks', async () => {
+    const log = vi.spyOn(console, 'log');
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests({ shard: { index: 1, total: 2 } });
+
+    expect(log.mock.calls.flat().join('\n')).not.toContain('No mocks collected');
+    // Still validated what it did collect — only the hint is suppressed.
+    expect(validateMocks).toHaveBeenCalled();
   });
 
   it('validates contracts on a sharded early stop and marks them partial', async () => {

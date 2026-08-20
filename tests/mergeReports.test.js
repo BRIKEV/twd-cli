@@ -5,6 +5,7 @@ import {
   reportTimings,
   reportTotals,
 } from '../src/mergeReports.js';
+import { REPORT_SCHEMA_VERSION } from '../src/runReport.js';
 
 const HANDLERS = [
   { id: 's1', name: 'Login', parent: null, type: 'suite' },
@@ -15,10 +16,13 @@ const HANDLERS = [
 
 const FINGERPRINT = 'sha256:deadbeef';
 
+// Ids are per-page-load random in reality, so shard n's report carries ids
+// nothing else can resolve. index (position in the discovered order) and path
+// are what stay stable, and they are what the merge relies on.
 function makeReport(index, overrides = {}) {
   const {
     total = 3,
-    tests = [{ id: `t${index}`, status: 'pass' }],
+    tests = [{ id: `r${index}-t`, path: `Login > ${'abc'[index - 1]}`, index: index - 1, status: 'pass' }],
     startedAt = `2026-08-19T10:00:0${index}.000Z`,
     endedAt = `2026-08-19T10:00:1${index}.000Z`,
     durationMs = 10_000,
@@ -29,8 +33,9 @@ function makeReport(index, overrides = {}) {
     coverageFile = 'coverage.json',
     contracts = { configured: true, partial: false, results: [], skipped: [] },
     fingerprint = FINGERPRINT,
-    schemaVersion = 1,
+    schemaVersion = REPORT_SCHEMA_VERSION,
     totalTests = 3,
+    selectedTests = 3,
   } = overrides;
 
   return {
@@ -40,7 +45,7 @@ function makeReport(index, overrides = {}) {
       executed, notRun, failed, stoppedEarly, coverageFile, recording: null,
     }],
     discovery: { totalTests, fingerprint },
-    selection: { filters: [] },
+    selection: { filters: [], selectedTests },
     handlers: HANDLERS,
     tests,
     contracts,
@@ -50,7 +55,8 @@ function makeReport(index, overrides = {}) {
 describe('mergeRunReports', () => {
   it('concatenates tests across shards', () => {
     const merged = mergeRunReports([makeReport(1), makeReport(2), makeReport(3)]);
-    expect(merged.tests.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
+    expect(merged.tests.map((t) => t.index)).toEqual([0, 1, 2]);
+    expect(merged.tests.map((t) => t.path)).toEqual(['Login > a', 'Login > b', 'Login > c']);
   });
 
   it('sorts shard descriptors by index regardless of input order', () => {
@@ -81,7 +87,7 @@ describe('mergeRunReports', () => {
     const merged = mergeRunReports([first, second]);
 
     expect(merged.discovery.totalTests).toBe(3);
-    expect(merged.selection).toEqual({ filters: [] });
+    expect(merged.selection).toEqual({ filters: [], selectedTests: 3 });
     expect(merged.handlers).toEqual(HANDLERS);
     expect(merged.contracts.configured).toBe(true);
   });
@@ -123,8 +129,21 @@ describe('mergeRunReports', () => {
   });
 
   it('throws when schema versions disagree', () => {
-    expect(() => mergeRunReports([makeReport(1), makeReport(2, { schemaVersion: 2 })]))
-      .toThrow(/schemaVersion/);
+    expect(() => mergeRunReports([
+      makeReport(1),
+      makeReport(2, { schemaVersion: REPORT_SCHEMA_VERSION + 1 }),
+    ])).toThrow(/schemaVersion/);
+  });
+
+  // Agreeing with each other is not enough. Reports from a newer twd-cli agree,
+  // and merging them against a schema this binary does not know is the silent
+  // mis-merge the field exists to prevent.
+  it('throws when every shard agrees on a version this build does not read', () => {
+    const future = REPORT_SCHEMA_VERSION + 1;
+    expect(() => mergeRunReports([
+      makeReport(1, { schemaVersion: future }),
+      makeReport(2, { schemaVersion: future }),
+    ])).toThrow(new RegExp(`schema v${future}, but this twd-cli reads v${REPORT_SCHEMA_VERSION}`));
   });
 
   // The safety net: shards that saw different test sets must never be combined.
@@ -143,11 +162,23 @@ describe('mergeRunReports', () => {
       .toThrow(/more than once/);
   });
 
-  it('throws when a test id appears in two shards', () => {
+  // Overlap is keyed on position, not id: shards never agree on ids, so the old
+  // id check could not fire at all.
+  it('throws when the same position appears in two shards', () => {
     expect(() => mergeRunReports([
-      makeReport(1, { tests: [{ id: 'dup', status: 'pass' }] }),
-      makeReport(2, { tests: [{ id: 'dup', status: 'pass' }] }),
-    ])).toThrow(/"dup" appears in more than one shard/);
+      makeReport(1, { tests: [{ id: 'aaa', path: 'Login > a', index: 0, status: 'pass' }] }),
+      makeReport(2, { tests: [{ id: 'zzz', path: 'Login > a', index: 0, status: 'pass' }] }),
+    ])).toThrow(/"Login > a" \(position 0\) appears in more than one shard/);
+  });
+
+  // Two tests may legitimately share a "suite > test" path and land in
+  // different shards. Keying identity on the path would fail a correct run.
+  it('accepts duplicate paths in different shards when the positions differ', () => {
+    const merged = mergeRunReports([
+      makeReport(1, { tests: [{ id: 'aaa', path: 'Login > a', index: 0, status: 'pass' }] }),
+      makeReport(2, { tests: [{ id: 'zzz', path: 'Login > a', index: 1, status: 'pass' }] }),
+    ]);
+    expect(merged.tests).toHaveLength(2);
   });
 
   it('does not mutate the input reports', () => {
@@ -187,12 +218,13 @@ describe('reportTimings', () => {
 });
 
 describe('reportTotals', () => {
-  it('sums executed and notRun and confirms they account for discovery', () => {
+  it('sums executed and notRun and confirms they account for the selection', () => {
     const merged = mergeRunReports([makeReport(1), makeReport(2), makeReport(3)]);
-    expect(reportTotals(merged)).toEqual({ executed: 3, notRun: 0, consistent: true });
+    expect(reportTotals(merged))
+      .toEqual({ executed: 3, notRun: 0, expected: 3, consistent: true });
   });
 
-  it('flags totals that do not add up to the discovered count', () => {
+  it('flags totals that do not add up to the selected count', () => {
     const merged = mergeRunReports([makeReport(1), makeReport(2)]);
     expect(reportTotals(merged).consistent).toBe(false);
   });
@@ -203,6 +235,17 @@ describe('reportTotals', () => {
       makeReport(2, { executed: 1, notRun: 1, stoppedEarly: true, failed: 1 }),
       makeReport(3),
     ]);
-    expect(reportTotals(merged)).toEqual({ executed: 3, notRun: 1, consistent: false });
+    expect(reportTotals(merged))
+      .toEqual({ executed: 3, notRun: 1, expected: 3, consistent: false });
+  });
+
+  // The regression this fixes: --test narrows what the shards divide, so
+  // comparing against every discovered test called a correct run a slicing bug.
+  it('measures a filtered run against the filtered count, not the whole suite', () => {
+    const merged = mergeRunReports([
+      makeReport(1, { totalTests: 40, selectedTests: 2, tests: [] }),
+      makeReport(2, { totalTests: 40, selectedTests: 2, tests: [] }),
+    ]);
+    expect(reportTotals(merged)).toEqual({ executed: 2, notRun: 0, expected: 2, consistent: true });
   });
 });

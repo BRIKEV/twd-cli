@@ -140,8 +140,20 @@ storing derived totals would let them drift out of agreement under merge.
 
 ### `discovery.fingerprint` is the safety net
 
-The fingerprint is a hash of `{ orderedIds: <all registered test ids in order>,
-filters: <sorted --test values> }`.
+> **Correction (fixed in review, report schema v2).** This section originally
+> specified the hash over test **ids**. That could never work: `twd-js` mints
+> ids with `Math.random()` at registration time, so every page load — and
+> therefore every shard's browser — invents different ids for the same tests.
+> The hash was a per-load nonce and `merge` rejected every correct multi-shard
+> run. Identity is now split in two: `tests[].path` (the `"suite > test"`
+> string, resolved in the shard that ran the test) is what the fingerprint
+> hashes and what the summary displays, and `tests[].index` (position in the
+> discovered order) is the cross-shard identity key. The same defect made the
+> "no test id appears in two reports" check below vacuous; it is keyed on
+> `index` now.
+
+The fingerprint is a hash of `{ orderedPaths: <every registered test's
+"suite > test" path, in order>, filters: <sorted --test values> }`.
 
 Round-robin sharding is correct only if every job enumerates an identical test
 set. That silently breaks if the app registers tests conditionally — a feature
@@ -254,7 +266,8 @@ Validation runs before anything is combined. All of these are fatal:
 - all `discovery.fingerprint` equal
 - all `shards[].total` equal, and `shards[].index` covers `1..total` exactly —
   no gaps, no duplicates
-- no test id appears in two reports
+- no test *position* (`tests[].index`) appears in two reports — see the
+  correction above; ids cannot serve as a key
 
 Combining is then mechanical. `tests`, `contracts.results` and
 `contracts.skipped` concat. `shards` concats sorted by index. `handlers` and
@@ -339,7 +352,7 @@ nothing. Invalid shard specs error and exit 1.
 | Shard crashed before upload, artifact missing | error, names the missing index — never a silent 3-of-4 green |
 | Shard uploaded but bailed at `maxFailures` | merged report carries its `notRun`, contracts flagged `partial`, exit driven by the real failures |
 | Shards saw different test sets | error citing conditional registration or mismatched code |
-| Same test id in two shards | error — shard math bug |
+| Same test position in two shards | error — shard math bug |
 | Fewer tests than shards | valid: empty shard writes `tests: []` |
 | `--shard 5/4`, `0/4`, `abc` | parse error, exit 1 |
 | A shard's `coverage.json` absent | that shard does not contribute; merge states the contributor count |
