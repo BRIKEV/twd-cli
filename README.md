@@ -7,7 +7,7 @@ CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) �
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
-- [Sharding across CI jobs](#sharding-across-ci-jobs): split a run across parallel CI jobs
+- [Sharding across CI jobs](#sharding-across-ci-jobs): split a long run across parallel jobs ([details](docs/sharding.md))
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 
@@ -268,92 +268,6 @@ jobs:
         run: npm run collect:coverage:text
 ```
 
-## Sharding across CI jobs
-
-A single run walks the whole suite in one browser. `--shard` splits it across
-parallel CI jobs instead.
-
-```bash
-npx twd-cli run --shard 2/4     # "I am job 2 of 4"
-npx twd-cli merge .twd/shards   # join the reports back together
-```
-
-The `4` is how many jobs you are running, **not** how many tests exist. You never
-need to know the test count: each shard boots its own browser, discovers the whole
-suite exactly as a normal run does, and keeps every 4th test. Add tests and the
-same 4 jobs just split more of them.
-
-Each shard writes `run.json` and `coverage.json` to `./.twd/run` (change it with
-`--report-dir`). `merge` reads the downloaded shard directories, combines the test
-results, coverage and contract validation, prints one summary, and exits non-zero
-if anything failed anywhere.
-
-```yaml
-jobs:
-  test:
-    strategy:
-      fail-fast: false                        # or one red shard cancels the rest
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      # ...checkout, npm ci, chrome, dev server...
-      - run: npx twd-cli run --shard ${{ matrix.shard }}/4
-      - uses: actions/upload-artifact@v4
-        if: always()                          # a red shard must still upload
-        with:
-          name: twd-run-${{ matrix.shard }}
-          path: .twd/run
-
-  merge:
-    needs: [test]
-    if: ${{ !cancelled() }}                   # runs even though a shard went red
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: twd-run-*
-          path: .twd/shards
-      - run: npx twd-cli merge .twd/shards
-```
-
-Those three conditions are easy to miss and each one breaks the run:
-`fail-fast: false` stops a red shard cancelling its siblings, `if: always()` on
-upload keeps a red shard's report, and `if: ${{ !cancelled() }}` on merge lets the
-summary print at all.
-
-### Notes
-
-- **Coverage.** Each shard writes its own `coverage.json`; `merge` combines them
-  into `.nyc_output/out.json` — but only when the whole run is green, matching how
-  a single run behaves. `merge` reports how many shards contributed.
-- **Missing shards are an error.** If a shard job dies before uploading, `merge`
-  refuses and names the gap rather than silently reporting 3 of 4 shards as a
-  complete green run.
-- **Tests must register identically in every job.** Each shard fingerprints the
-  ordered list of `"suite > test"` paths it discovered and `merge` verifies they
-  match. Registering tests conditionally — behind a feature flag, a date,
-  `Math.random()` — makes the fingerprints diverge and `merge` will say so.
-  (Paths rather than internal test ids: `twd-js` assigns those at registration
-  time and they differ on every page load, so each shard's browser sees its own.)
-- **`maxFailures` is per shard.** Four shards at the default of 10 can reach 40
-  failures between them before all four bail.
-- **`--test` and `--shard` compose:** filters resolve first, then the filtered list
-  is sharded. As with any filtered run, coverage is skipped.
-- **Recording** produces one clip per shard; they are not concatenated.
-- **A missing shard leaves no merged report on disk.** `merge` throws before it
-  writes `.twd/merged-run.json`, so a CI step that uploads that path with
-  `if: always()` will find nothing when a shard is missing. The error message on
-  stderr is the diagnosis in that case.
-- **`record.filename` collides under sharding.** Only the *derived* recording
-  filename is per-shard. If `record.filename` is set explicitly in
-  `twd.config.json`, every shard writes to the same video path. Use the derived
-  name, or a per-shard `--record-dir`, when recording a sharded run.
-
 ## Contract Validation
 
 Validate your test mocks against OpenAPI specs to catch drift between your mocks and the real API. When a mock response doesn't match the spec, you'll see errors like:
@@ -435,6 +349,30 @@ When `contractReportPath` is set and you use the action with `contract-report: '
 | `posts-3.1.json` | 2 | 2 | 0 | `warn` |
 
 Failed validations are included in a collapsible details section with a link to the full CI log.
+
+## Sharding across CI jobs
+
+Long suites can be split across parallel CI jobs. Each shard runs one slice of
+the suite and writes a report; `twd-cli merge` joins them into a single summary
+and owns the exit code.
+
+```bash
+npx twd-cli run --shard 2/4     # "I am job 2 of 4"
+npx twd-cli merge .twd/shards   # join the reports back together
+```
+
+The `4` is how many jobs you are running, **not** how many tests exist — each
+shard discovers the whole suite itself and keeps every 4th test, so the suite can
+grow without a workflow edit.
+
+**Sharding only pays on long suites.** It trades fixed per-job setup for parallel
+execution, so a suite that runs in seconds comes out *slower*. As a rule of
+thumb, two shards win once test time is more than twice the merge job's cost.
+
+See **[docs/sharding.md](docs/sharding.md)** for the full workflow, the three
+conditions that are easy to get wrong, the break-even maths with measured
+numbers, and the caveats — test independence, `maxFailures` being per shard, and
+coverage on a red run.
 
 ## Requirements
 
