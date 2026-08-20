@@ -59,6 +59,14 @@ describe('fingerprintTests', () => {
 });
 
 describe('buildRunReport', () => {
+  // Pins the literal on purpose. Every other assertion in the suite derives
+  // from REPORT_SCHEMA_VERSION, so editing the constant would otherwise leave
+  // all 438 tests green — and the version's only job is to be a tripwire for
+  // shards produced by mismatched twd-cli builds.
+  it('is at schema version 2', () => {
+    expect(REPORT_SCHEMA_VERSION).toBe(2);
+  });
+
   it('stamps the schema version', () => {
     expect(build().schemaVersion).toBe(REPORT_SCHEMA_VERSION);
   });

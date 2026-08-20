@@ -94,7 +94,7 @@ both, and makes a normal run the N=1 case with no second code path.
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "shards": [
     { "index": 2, "total": 4,
       "startedAt": "2026-08-19T10:00:00.000Z",
@@ -105,15 +105,17 @@ both, and makes a normal run the N=1 case with no second code path.
       "recording": { "file": "login.mp4", "bytes": 481920 } }
   ],
   "discovery": { "totalTests": 120, "fingerprint": "sha256:abc123..." },
-  "selection": { "filters": [] },
+  "selection": { "filters": [], "selectedTests": 120 },
   "handlers": [ { "id": "...", "name": "...", "parent": "...", "type": "test" } ],
-  "tests":    [ { "id": "...", "status": "pass", "retryAttempt": 2 } ],
+  "tests":    [ { "id": "...", "status": "pass", "retryAttempt": 2,
+                  "path": "Login > shows error", "index": 7 } ],
   "contracts": { "configured": true, "partial": false, "results": [], "skipped": [] }
 }
 ```
 
-`handlers` and `tests` reuse the exact shapes already flowing through
-`src/index.js:128` and `:226`, so `buildTestPath`, `formatRunComplete` and
+`handlers` passes through exactly as enumerated. `tests` is the in-page status
+array plus two fields the shard resolves before writing — `path` for display and
+`index` for identity (see the correction below) — so `formatRunComplete` and
 `generateContractMarkdown` need no data massaging. `contracts` is
 `validateMocks()`'s return value verbatim plus two flags.
 
@@ -125,6 +127,11 @@ shard went red is most of that line's value.
 `selection.filters` holds the `--test` values. Filters and shards compose:
 filters resolve first, then the filtered list is sharded. There is no companion
 `mode` field — a report only exists under `--shard`, so it would be a constant.
+
+`selection.selectedTests` is the count the shards actually divided, which is what
+`executed + notRun` must sum to. `discovery.totalTests` counts the whole suite,
+so comparing against *that* reports a phantom slicing bug on any correct
+`--test` + `--shard` run.
 
 Coverage is **referenced, not embedded** — `coverageFile` names a sibling file.
 This keeps `run.json` readable by eye and keeps coverage in stock Istanbul
