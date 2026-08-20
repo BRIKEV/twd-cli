@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
-import { runTests } from '../src/index.js';
+// runTests and runMerge are imported inside their branches, not here. A static
+// import of src/index.js pulls in puppeteer, so `twd-cli merge` — which never
+// opens a browser — would otherwise load the whole browser-automation graph
+// before it even looked at argv.
 import { parseRunArgs, parseMergeArgs } from '../src/parseArgs.js';
-import { runMerge } from '../src/mergeCommand.js';
 
 const command = process.argv[2];
 
 if (command === 'run') {
   try {
     const { testFilters, record, shard, reportDir } = parseRunArgs(process.argv.slice(3));
+    const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
       testFilters,
       recordOverrides: record,
@@ -25,6 +28,7 @@ if (command === 'run') {
 } else if (command === 'merge') {
   try {
     const { dir, out } = parseMergeArgs(process.argv.slice(3));
+    const { runMerge } = await import('../src/mergeCommand.js');
     const hasFailures = runMerge({ dir, out });
     process.exit(hasFailures ? 1 : 0);
   } catch (error) {
