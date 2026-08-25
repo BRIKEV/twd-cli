@@ -1,4 +1,4 @@
-## <small>1.5.0-beta.0 (2026-08-19)</small>
+## <small>1.5.0 (2026-08-25)</small>
 
 * feat(shard): `--shard <i>/<n>` runs one slice of the suite so a run can be split across parallel CI jobs. Each shard discovers the whole suite itself and takes every nth test, so the test count never has to be known in advance
 * feat(shard): a sharded run writes `run.json` and `coverage.json` to `./.twd/run` (`--report-dir` to change it) — the first machine-readable output twd-cli has had
@@ -10,11 +10,11 @@
 
 Sharding needs three things right in the workflow: `fail-fast: false` on the
 matrix, `if: always()` on the shard's artifact upload, and
-`if: ${{ !cancelled() }}` on the merge job. See "Sharding across CI jobs" in the
-README.
+`if: ${{ !cancelled() }}` on the merge job. Each one breaks the run differently
+if left out. See [docs/sharding.md](docs/sharding.md) for a runnable workflow.
 
-This is a prerelease, published under the `beta` dist-tag:
-`npm install twd-cli@beta`.
+A normal release: `npm install twd-cli` gets it. The *sharding feature* is the
+part marked beta — everything else in this version is stable.
 
 ## <small>1.4.0 (2026-07-28)</small>
 
