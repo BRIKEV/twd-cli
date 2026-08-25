@@ -7,7 +7,7 @@ CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) â€
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
-- [Sharding across CI jobs](#sharding-across-ci-jobs): split a long run across parallel jobs ([details](docs/sharding.md))
+- [Sharding across CI jobs](#sharding-across-ci-jobs) **(beta)**: split a long run across parallel jobs ([details](docs/sharding.md))
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 
@@ -351,6 +351,10 @@ When `contractReportPath` is set and you use the action with `contract-report: '
 Failed validations are included in a collapsible details section with a link to the full CI log.
 
 ## Sharding across CI jobs
+
+> **Beta.** Strictly additive: a run without `--shard` behaves exactly as before,
+> so turning this on cannot affect your existing pipeline. How tests are assigned
+> to shards may still change â€” see [docs/sharding.md](docs/sharding.md).
 
 Long suites can be split across parallel CI jobs. Each shard runs one slice of
 the suite and writes a report; `twd-cli merge` joins them into a single summary

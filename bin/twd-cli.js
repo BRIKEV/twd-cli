@@ -47,10 +47,10 @@ Usage:
                                    contains <name> (case-insensitive).
                                    Repeatable; multiple --test values are OR'd.
   npx twd-cli run --record         Record the run to a video file
-  npx twd-cli run --shard 2/4      Run only this shard's slice of the suite
-                                   and write a report to ./.twd/run
-  npx twd-cli merge <dir>          Merge shard reports from <dir> into one
-                                   report, and exit 1 if the whole run failed
+  npx twd-cli run --shard 2/4      (beta) Run only this shard's slice of the
+                                   suite and write a report to ./.twd/run
+  npx twd-cli merge <dir>          (beta) Merge shard reports from <dir> into
+                                   one report, exit 1 if the run failed
 
 Examples:
   npx twd-cli run --test "shows error"
@@ -60,9 +60,10 @@ Examples:
 
 Options:
   --test "<name>"        Filter tests by "suite > test" path (repeatable, OR'd)
-  --shard <i>/<n>        Run slice i of n. Each shard discovers the whole
-                         suite and takes every nth test, so the test count
+  --shard <i>/<n>        (beta) Run slice i of n. Each shard discovers the
+                         whole suite and takes every nth test, so the count
                          never has to be known in advance. Implies a report.
+                         Which tests land in which shard may change.
   --report-dir <path>    Where to write the shard report (default ./.twd/run)
   --out <path>           merge only: where to write the merged report
                          (default ./.twd/merged-run.json)
