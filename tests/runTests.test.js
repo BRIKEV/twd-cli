@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runTests } from "../src/index.js";
+import { REPORT_SCHEMA_VERSION } from "../src/runReport.js";
 
 vi.mock('fs');
 vi.mock('puppeteer');
@@ -1182,4 +1183,375 @@ describe("runTests pacing", () => {
     expect(hasFailures).toBe(false);
   });
 
+});
+
+describe('runTests sharding', () => {
+  function fourTests() {
+    return {
+      handlers: [
+        { id: '1', name: 'a', type: 'test' },
+        { id: '2', name: 'b', type: 'test' },
+        { id: '3', name: 'c', type: 'test' },
+        { id: '4', name: 'd', type: 'test' },
+      ],
+      testStatus: [{ id: '2', status: 'pass' }, { id: '4', status: 'pass' }],
+    };
+  }
+
+  function runJson() {
+    const call = vi.mocked(fs.writeFileSync).mock.calls
+      .find(([file]) => String(file).endsWith('run.json'));
+    return call ? JSON.parse(call[1]) : null;
+  }
+
+  // runJson() and the not.toHaveBeenCalled() assertions read fs call history, so
+  // this block cannot inherit another describe's. loadConfig has to be re-stubbed
+  // too: clearAllMocks keeps implementations, so without this the previous block's
+  // recording-enabled config (with a pace) leaks in.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Round-robin: shard 2 of 2 takes the odd indices, i.e. the 2nd and 4th ids.
+  it('runs only its round-robin slice', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['2', '4']);
+  });
+
+  it('writes a run report to the default report dir', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(fs.mkdirSync).toHaveBeenCalledWith('./.twd/run', { recursive: true });
+    const report = runJson();
+    expect(report.schemaVersion).toBe(REPORT_SCHEMA_VERSION);
+    expect(report.shards[0]).toMatchObject({ index: 2, total: 2, executed: 2 });
+    expect(report.discovery.totalTests).toBe(4);
+    expect(report.tests.map((t) => t.id)).toEqual(['2', '4']);
+  });
+
+  // path is resolved here, in the shard that ran the test, because twd-js ids
+  // are random per page load: shard 2's ids do not exist in the handler map a
+  // merged report keeps, so the merged summary could not name these tests
+  // otherwise. index is the cross-shard identity — the same number in every
+  // shard, unlike the id.
+  it('stamps each result with its resolved path and its position in the order', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(runJson().tests).toEqual([
+      { id: '2', status: 'pass', path: 'b', index: 1 },
+      { id: '4', status: 'pass', path: 'd', index: 3 },
+    ]);
+  });
+
+  // The fingerprint is over paths, not ids, so two shards of the same suite
+  // agree on it even though their browsers minted entirely different ids. With
+  // ids it could never match and merge rejected every correct sharded run.
+  it('fingerprints identically across shards whose ids differ', async () => {
+    const { handlers, testStatus } = fourTests();
+    const first = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(first));
+    await runTests({ shard: { index: 1, total: 2 } });
+    const shardOne = runJson().discovery.fingerprint;
+
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    // Same suite, same order, all-new ids — exactly what a second browser does.
+    const relabeled = handlers.map((h) => ({ ...h, id: `x${h.id}` }));
+    const second = createMockPage({ handlers: relabeled, testStatus: [] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(second));
+    await runTests({ shard: { index: 2, total: 2 } });
+
+    expect(runJson().discovery.fingerprint).toBe(shardOne);
+  });
+
+  it('honors --report-dir', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 1, total: 1 }, reportDir: './out' });
+
+    expect(fs.mkdirSync).toHaveBeenCalledWith('./out', { recursive: true });
+  });
+
+  it('writes no report when not sharded', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(runJson()).toBeNull();
+  });
+
+  // 3 tests across 4 shards leaves the fourth with nothing to run. It must
+  // still write a valid report, or merge sees a gap it cannot explain.
+  it('writes a valid empty report when its slice is empty', async () => {
+    const handlers = [
+      { id: '1', name: 'a', type: 'test' },
+      { id: '2', name: 'b', type: 'test' },
+      { id: '3', name: 'c', type: 'test' },
+    ];
+    const page = createMockPage({ handlers, testStatus: [] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    const hasFailures = await runTests({ shard: { index: 4, total: 4 } });
+
+    expect(hasFailures).toBe(false);
+    const report = runJson();
+    expect(report.tests).toEqual([]);
+    expect(report.shards[0]).toMatchObject({ index: 4, total: 4, executed: 0, failed: 0 });
+    // The fingerprint still covers the whole suite, so an empty shard merges
+    // cleanly with the three that ran something.
+    expect(report.discovery.totalTests).toBe(3);
+  });
+
+  // Filters resolve first, then the filtered list is sharded. A filtered run's
+  // coverage is a misleading project-wide number, sharded or not.
+  it('skips coverage when a filter is combined with a shard', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, coverage: true });
+
+    await runTests({ shard: { index: 1, total: 2 }, testFilters: ['a'] });
+
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.endsWith('coverage.json'))).toBe(false);
+    expect(runJson().shards[0].coverageFile).toBeNull();
+    expect(runJson().selection.filters).toEqual(['a']);
+  });
+
+  // Filters resolve first, so the shards divide the filtered list, and that is
+  // the count executed + notRun has to add up to. Recording the unfiltered
+  // total instead made merge print a shard-slicing warning on a correct run.
+  it('records the filtered count as the selection the shards divided', async () => {
+    const { handlers } = fourTests();
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 1, total: 2 }, testFilters: ['a'] });
+
+    const report = runJson();
+    expect(report.discovery.totalTests).toBe(4);
+    expect(report.selection.selectedTests).toBe(1);
+    expect(report.shards[0].executed + report.shards[0].notRun)
+      .toBe(report.selection.selectedTests);
+  });
+});
+
+describe('runTests non-regression: non-sharded behavior is unchanged', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // The !hasFailures coverage gate is relaxed only for sharded runs. A plain
+  // failing run must still write nothing, exactly as in 1.4.0.
+  it('writes no coverage when a non-sharded run fails', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'boom' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, coverage: true });
+
+    await runTests();
+
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  // The successful coverage write. Splitting its if/else apart is the most
+  // delicate edit in the sharding change and nothing else exercised this block,
+  // so pin the destination: nyc reads .nyc_output/out.json by default.
+  it('still writes coverage to .nyc_output/out.json when a non-sharded run passes', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, coverage: true });
+
+    await runTests();
+
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files).toHaveLength(1);
+    expect(files[0].includes('.nyc_output')).toBe(true);
+    expect(files[0].endsWith('out.json')).toBe(true);
+  });
+
+  // Likewise the early-stop contract skip.
+  it('still skips contract validation when a non-sharded run stops early', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'boom' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, maxFailures: 1, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+
+    await runTests();
+
+    expect(validateMocks).not.toHaveBeenCalled();
+  });
+
+  // The twd-js version hint gained a `&& !sharded` gate. A plain run with
+  // contracts configured and nothing collected really may be running a twd-js
+  // that cannot collect, so it must still say so.
+  it('still hints at twd-js when a non-sharded run collects no mocks', async () => {
+    const log = vi.spyOn(console, 'log');
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests();
+
+    expect(log.mock.calls.flat().join('\n')).toContain('No mocks collected');
+  });
+
+  // The markdown report gained a `&& !sharded` gate. A plain run must still
+  // write it, and this is the only test that executes that block at all.
+  it('still writes the contract markdown report on a non-sharded run', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      contracts: [{ source: 'api.json' }],
+      contractReportPath: './contract-report.md',
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests();
+
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.endsWith('contract-report.md'))).toBe(true);
+  });
+});
+
+describe('runTests sharded behavior changes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(fs.statSync).mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('writes coverage for a sharded run that fails', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'boom' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, coverage: true });
+
+    await runTests({ shard: { index: 1, total: 1 } });
+
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.endsWith('coverage.json'))).toBe(true);
+    // Never the path nyc reads by default: a shard's partial coverage there
+    // would masquerade as the whole run's.
+    expect(files.some((f) => f.includes('.nyc_output'))).toBe(false);
+  });
+
+  // Every shard would overwrite the others with a fraction of the picture, so
+  // the markdown report is merge's job. The run.json still gets written.
+  it('writes no contract markdown report when sharded', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      contracts: [{ source: 'api.json' }],
+      contractReportPath: './contract-report.md',
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests({ shard: { index: 1, total: 1 } });
+
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.endsWith('contract-report.md'))).toBe(false);
+    expect(files.some((f) => f.endsWith('run.json'))).toBe(true);
+  });
+
+  // A shard whose slice exercised no mocks — and any shard with an empty slice —
+  // collects nothing, which is normal. Printing the twd-js version hint there
+  // advertises a problem that does not exist, on the happy path of every
+  // sharded CI run.
+  it('does not hint at twd-js when a sharded run collects no mocks', async () => {
+    const log = vi.spyOn(console, 'log');
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'pass' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests({ shard: { index: 1, total: 2 } });
+
+    expect(log.mock.calls.flat().join('\n')).not.toContain('No mocks collected');
+    // Still validated what it did collect — only the hint is suppressed.
+    expect(validateMocks).toHaveBeenCalled();
+  });
+
+  it('validates contracts on a sharded early stop and marks them partial', async () => {
+    const handlers = [{ id: '1', name: 'a', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'boom' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, maxFailures: 1, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [{ alias: 'a' }], skipped: [] });
+    vi.mocked(printContractReport).mockReturnValue(false);
+
+    await runTests({ shard: { index: 1, total: 1 } });
+
+    expect(validateMocks).toHaveBeenCalled();
+    const call = vi.mocked(fs.writeFileSync).mock.calls
+      .find(([file]) => String(file).endsWith('run.json'));
+    const report = JSON.parse(call[1]);
+    expect(report.contracts).toMatchObject({ configured: true, partial: true });
+    expect(report.contracts.results).toEqual([{ alias: 'a' }]);
+  });
 });

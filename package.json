@@ -1,12 +1,19 @@
 {
   "name": "twd-cli",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "CLI tool for running TWD tests with Puppeteer",
   "type": "module",
   "main": "src/index.js",
   "bin": {
     "twd-cli": "./bin/twd-cli.js"
   },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "vitest",
     "test:ci": "vitest --run --coverage",
@@ -24,6 +31,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "istanbul-lib-coverage": "^3.2.2",
     "openapi-mock-validator": "^0.3.0",
     "puppeteer": "^25.3.0"
   },

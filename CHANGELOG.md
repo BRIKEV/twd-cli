@@ -1,3 +1,21 @@
+## <small>1.5.0 (2026-08-25)</small>
+
+* feat(shard): `--shard <i>/<n>` runs one slice of the suite so a run can be split across parallel CI jobs. Each shard discovers the whole suite itself and takes every nth test, so the test count never has to be known in advance
+* feat(shard): a sharded run writes `run.json` and `coverage.json` to `./.twd/run` (`--report-dir` to change it) — the first machine-readable output twd-cli has had
+* feat(merge): `npx twd-cli merge <dir>` joins shard reports into one report covering test results, coverage and contract validation, prints a single summary with a per-shard breakdown, and owns the exit code
+* feat(merge): a missing shard report is an error naming the gap, not a silently incomplete report. Shards also fingerprint the test list they discovered, so shards that saw different test sets refuse to merge
+* chore(packaging): a `files` allowlist in package.json — the published package is now just `bin/`, `src/`, `README.md`, `CHANGELOG.md` and `LICENSE`. `tests/`, `test-example-app/`, `docs/` and the repo tooling were all being published and no longer are, taking the tarball from ~209 kB to ~33 kB (99 files to 25, ~850 kB to ~101 kB unpacked). Nothing that was importable before has moved
+* note: **sharding ships as a beta feature.** It is strictly additive, so a run without `--shard` is unaffected, but which tests land in which shard is not yet a stable contract — a later release is likely to group by top-level `describe` so a suite always stays in one shard
+* note: no behavior change without `--shard`. A plain run writes the same files, prints the same output, and exits the same way as 1.4.0
+
+Sharding needs three things right in the workflow: `fail-fast: false` on the
+matrix, `if: always()` on the shard's artifact upload, and
+`if: ${{ !cancelled() }}` on the merge job. Each one breaks the run differently
+if left out. See [docs/sharding.md](docs/sharding.md) for a runnable workflow.
+
+A normal release: `npm install twd-cli` gets it. The *sharding feature* is the
+part marked beta — everything else in this version is stable.
+
 ## <small>1.4.0 (2026-07-28)</small>
 
 * feat(record): video recording for twd-cli runs (#13) ([94c21e0](https://github.com/BRIKEV/twd-cli/commit/94c21e0)), closes [#13](https://github.com/BRIKEV/twd-cli/issues/13)

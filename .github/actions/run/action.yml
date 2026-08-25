@@ -1,5 +1,5 @@
 name: 'TWD CLI Run'
-description: 'Run TWD browser tests with Puppeteer, including optional contract validation reporting'
+description: 'Run TWD browser tests with Puppeteer, optionally as one shard of a parallel matrix, including contract validation reporting'
 branding:
   icon: 'check-circle'
   color: 'green'
@@ -13,6 +13,25 @@ inputs:
     description: 'Post contract validation report as a PR comment (requires pull-requests: write permission)'
     required: false
     default: 'false'
+  shard:
+    description: >-
+      Run one shard of the suite, as <index>/<total> (e.g. 2/4). Each shard
+      discovers the whole suite and takes every nth test, so the test count
+      never has to be known in advance. Leave empty to run everything in one
+      job. Join the shards afterwards with `npx twd-cli merge`.
+    required: false
+    default: ''
+  report-dir:
+    description: 'Where the shard report is written. Only used when `shard` is set.'
+    required: false
+    default: '.twd/run'
+  upload-report:
+    description: >-
+      Upload the shard report as an artifact named `twd-run-<index>`, which is
+      the layout `twd-cli merge` expects after actions/download-artifact. Only
+      used when `shard` is set.
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -29,10 +48,48 @@ runs:
       shell: bash
       run: npx puppeteer browsers install chrome
 
+    - name: Resolve shard
+      id: shard
+      shell: bash
+      env:
+        SHARD: ${{ inputs.shard }}
+      run: |
+        if [ -z "$SHARD" ]; then
+          echo "index=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Artifact names cannot contain "/", so the index alone identifies the
+        # shard. twd-cli itself validates the spec and fails loudly on a bad
+        # one, so this only has to be good enough to name the artifact.
+        if ! printf '%s' "$SHARD" | grep -qE '^[0-9]+/[0-9]+$'; then
+          echo "::error::Invalid shard \"$SHARD\". Expected <index>/<total>, e.g. 2/4."
+          exit 1
+        fi
+        echo "index=${SHARD%%/*}" >> "$GITHUB_OUTPUT"
+
     - name: Run TWD tests
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: npx twd-cli run
+      env:
+        SHARD: ${{ inputs.shard }}
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: |
+        if [ -n "$SHARD" ]; then
+          npx twd-cli run --shard "$SHARD" --report-dir "$REPORT_DIR"
+        else
+          npx twd-cli run
+        fi
+
+    - name: Upload shard report
+      # always(): a red shard must still upload, or `merge` cannot tell "this
+      # shard failed" from "this shard never ran", and it reports the gap as a
+      # missing artifact instead of the real failure.
+      if: always() && inputs.shard != '' && inputs.upload-report == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: twd-run-${{ steps.shard.outputs.index }}
+        path: ${{ inputs.working-directory }}/${{ inputs.report-dir }}
+        if-no-files-found: error
 
     - name: Post contract report to PR
       if: inputs.contract-report == 'true' && github.event_name == 'pull_request'
@@ -42,7 +99,16 @@ runs:
         GH_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        SHARD: ${{ inputs.shard }}
       run: |
+        # A sharded run deliberately writes no contract markdown: every shard
+        # would overwrite the others with a fraction of the mocks. `twd-cli
+        # merge` writes it, so the comment belongs in the merge job.
+        if [ -n "$SHARD" ]; then
+          echo "::notice::Skipping the contract PR comment: this is shard $SHARD. Post it from the job that runs \`twd-cli merge\`, which is what writes the report."
+          exit 0
+        fi
+
         REPORT_PATH=$(node -e "
           const fs = require('fs');
           try {

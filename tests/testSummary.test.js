@@ -25,6 +25,41 @@ describe('formatRunComplete', () => {
     );
   });
 
+  // A merged report keeps only the first shard's handlers, and twd-js ids are
+  // random per page load, so a later shard's failure cannot be resolved from
+  // them — it used to print as a raw id in the merged summary. Each entry now
+  // carries the path its own shard resolved.
+  it('prefers the path the shard resolved over its own handler lookup', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 'k3j2h1g9d', path: 'Cart > removes an item', status: 'fail', error: 'boom' },
+        { id: 'z9y8x7w6v', path: 'Cart > applies a coupon', status: 'pass', retryAttempt: 2 },
+      ],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(block).toContain('× Cart > removes an item');
+    expect(block).toContain('✓ Cart > applies a coupon (passed on attempt 2)');
+    expect(block).not.toContain('k3j2h1g9d');
+    expect(block).not.toContain('z9y8x7w6v');
+  });
+
+  // A live non-sharded run carries no path, and a null path is a legal value.
+  it('falls back to the handler lookup, then the raw id', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'a' },
+        { id: 't2', path: null, status: 'fail', error: 'b' },
+        { id: 'ghost', status: 'fail', error: 'c' },
+      ],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(block).toContain('× Login > shows error on wrong password');
+    expect(block).toContain('× Login > redirects on success');
+    expect(block).toContain('× ghost');
+  });
+
   it('counts skipped tests', () => {
     const block = formatRunComplete({
       testStatus: [
@@ -176,5 +211,49 @@ describe('formatRunComplete', () => {
     });
     expect(block).toContain('Stopped early');
     expect(block).not.toContain('0 test(s) were not run');
+  });
+});
+
+describe('formatRunComplete with shards', () => {
+  const handlers = [
+    { id: 's1', name: 'Login', parent: null, type: 'suite' },
+    { id: 't1', name: 'works', parent: 's1', type: 'test' },
+  ];
+  const testStatus = [{ id: 't1', status: 'pass' }];
+
+  function shard(index, overrides = {}) {
+    return { index, total: 4, executed: 30, failed: 0, notRun: 0, stoppedEarly: false, ...overrides };
+  }
+
+  it('adds a shard breakdown line when more than one shard merged', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 38_200, computeMs: 134_200,
+      shards: [shard(1), shard(2, { failed: 3 }), shard(3), shard(4)],
+    });
+    expect(output).toContain('Shards: 1 ✓30 | 2 ✗30 | 3 ✓30 | 4 ✓30');
+  });
+
+  it('reports wall clock and compute separately for a merged run', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 38_200, computeMs: 134_200,
+      shards: [shard(1), shard(2)],
+    });
+    expect(output).toContain('Duration: 38.2s wall | 134.2s across 2 shards');
+  });
+
+  // The existing single-run format must not shift.
+  it('keeps the plain duration line when there are no shards', () => {
+    const output = formatRunComplete({ testStatus, handlers, durationMs: 4_200 });
+    expect(output).toContain('Duration: 4.2s');
+    expect(output).not.toContain('wall');
+    expect(output).not.toContain('Shards:');
+  });
+
+  it('keeps the plain duration line for a single shard', () => {
+    const output = formatRunComplete({
+      testStatus, handlers, durationMs: 4_200, computeMs: 4_200, shards: [shard(1, { total: 1 })],
+    });
+    expect(output).toContain('Duration: 4.2s');
+    expect(output).not.toContain('Shards:');
   });
 });

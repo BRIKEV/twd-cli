@@ -7,6 +7,7 @@ CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) �
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
+- [Sharding across CI jobs](#sharding-across-ci-jobs) **(beta)**: split a long run across parallel jobs ([details](docs/sharding.md))
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 
@@ -348,6 +349,34 @@ When `contractReportPath` is set and you use the action with `contract-report: '
 | `posts-3.1.json` | 2 | 2 | 0 | `warn` |
 
 Failed validations are included in a collapsible details section with a link to the full CI log.
+
+## Sharding across CI jobs
+
+> **Beta.** Strictly additive: a run without `--shard` behaves exactly as before,
+> so turning this on cannot affect your existing pipeline. How tests are assigned
+> to shards may still change — see [docs/sharding.md](docs/sharding.md).
+
+Long suites can be split across parallel CI jobs. Each shard runs one slice of
+the suite and writes a report; `twd-cli merge` joins them into a single summary
+and owns the exit code.
+
+```bash
+npx twd-cli run --shard 2/4     # "I am job 2 of 4"
+npx twd-cli merge .twd/shards   # join the reports back together
+```
+
+The `4` is how many jobs you are running, **not** how many tests exist — each
+shard discovers the whole suite itself and keeps every 4th test, so the suite can
+grow without a workflow edit.
+
+**Sharding only pays on long suites.** It trades fixed per-job setup for parallel
+execution, so a suite that runs in seconds comes out *slower*. As a rule of
+thumb, two shards win once test time is more than twice the merge job's cost.
+
+See **[docs/sharding.md](docs/sharding.md)** for the full workflow, the three
+conditions that are easy to get wrong, the break-even maths with measured
+numbers, and the caveats — test independence, `maxFailures` being per shard, and
+coverage on a red run.
 
 ## Requirements
 
