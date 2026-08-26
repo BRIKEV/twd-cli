@@ -64,6 +64,40 @@ Tests are in `tests/` and use vitest, one file per `src/` module. The suite mock
 
 No test may require a real ffmpeg binary or a real browser: `node:child_process` and `page.screencast` are always mocked. Note that `vi.mock('fs')` auto-mocks `fs.statSync` to return `undefined`, so anything reading a `Stats` has to tolerate that.
 
+## Releases
+
+The version bump is its own commit on `main`: `package.json`, the lockfile
+regenerated with `npm run lock:linux`, and a hand-written `CHANGELOG.md` entry.
+The `conventional-changelog` script in `package.json` is **not** used — entries
+are written by hand, and tags stopped tracking it after v1.1.15.
+
+`package-lock.json` carries the version in **two** places, the top-level
+`version` and `packages[""].version`. Both have to move.
+
+Publishing is driven by a GitHub Release, not by `npm publish` locally.
+`publish.yml` triggers on `release: published` and routes prereleases to the
+`beta` dist-tag via `github.event.release.prerelease`, so `npm install twd-cli`
+keeps resolving to the stable version.
+
+### Release title convention
+
+- **Stable: the title is exactly the tag.** `v1.4.0`, `v1.3.1`, `v1.3.0`. No
+  subtitle, no feature name.
+- **Prerelease: tag plus a short descriptor and `(beta)`.** For example
+  `v1.4.0-beta.1: video recording (beta)`, `v1.3.0-beta.1 — AI-friendly output
+  (beta)`.
+
+The release *notes* carry the detail either way; the title does not.
+
+### When the release event does not fire
+
+`publish.yml` has no `workflow_dispatch`, so its only trigger is an event that
+cannot be replayed. This has failed at least once (v1.5.0): the Release was
+created correctly, non-draft and non-prerelease, but no run appeared and nothing
+reached npm. Deleting and recreating the Release object did not re-fire it
+either. The fallback is to publish from a clean `main` checkout with
+`npm publish --access public`, which needs no CI.
+
 ## Key Dependencies
 
 - **puppeteer** — Browser automation (launches Chrome/Chromium)
