@@ -257,3 +257,72 @@ describe('formatRunComplete with shards', () => {
     expect(output).not.toContain('Shards:');
   });
 });
+
+// The diagnostics snapshot travels out of the page as raw data on the failure
+// entry (src/index.js), and is rendered here rather than in twd-js. See
+// src/failureDiagnostics.js for why the split sits where it does.
+describe('formatRunComplete diagnostics block', () => {
+  const failing = (diagnostics) => ({
+    id: 't1',
+    status: 'fail',
+    diagnostics,
+    error: 'AssertionError: expected 0 rows (at http://localhost:5173/cg-1/settings/catalog)',
+  });
+
+  it('prints the mock-rule row above the error message', () => {
+    const output = formatRunComplete({
+      testStatus: [failing({
+        location: '/cg-1/settings/catalog',
+        mockRules: { registered: 7, triggered: 6, untriggered: ['catalog'] },
+      })],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(output).toContain(
+      '    × Login > shows error on wrong password\n' +
+      '      mock rules  6/7 triggered — catalog never requested\n' +
+      '      AssertionError: expected 0 rows (at http://localhost:5173/cg-1/settings/catalog)'
+    );
+  });
+
+  it('indents every row of a multi-alias block to the error column', () => {
+    const output = formatRunComplete({
+      testStatus: [failing({
+        location: '/cg-1',
+        mockRules: { registered: 4, triggered: 1, untriggered: ['catalog', 'profile'] },
+      })],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(output).toContain(
+      '      mock rules  1/4 triggered — 2 never requested\n' +
+      '                  ✗ catalog\n' +
+      '                  ✗ profile\n'
+    );
+  });
+
+  // twd-js 1.9.0 and earlier send no snapshot at all. The failure must print
+  // exactly as it always has.
+  it('is byte-identical to the old output when no snapshot is present', () => {
+    const args = { handlers, durationMs: 1000 };
+    const withField = formatRunComplete({ testStatus: [failing(undefined)], ...args });
+    const withoutField = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'fail', error: failing().error }],
+      ...args,
+    });
+    expect(withField).toBe(withoutField);
+    expect(withField).not.toContain('mock rules');
+  });
+
+  // A test that failed an attempt then passed carries no snapshot on the pass
+  // entry, so a retried-then-green run stays clean.
+  it('prints no block for a test that passed on retry', () => {
+    const output = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'pass', retryAttempt: 2 }],
+      handlers,
+      durationMs: 1000,
+    });
+    expect(output).not.toContain('mock rules');
+    expect(output).toContain('Retried (1):');
+  });
+});

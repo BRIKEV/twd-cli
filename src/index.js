@@ -251,7 +251,17 @@ export async function runTests(options = {}) {
           },
           onFail: (test, err) => {
             test.status = "done";
-            testStatus.push({ id: test.id, status: "fail", error: `${err.message} (at ${window.location.href})` });
+            // The raw snapshot travels out; src/failureDiagnostics.js renders
+            // it in Node. This callback is serialised into the page and has no
+            // module scope, so it cannot reach a formatter, and duplicating one
+            // here would be a copy that drifts. `undefined` on a twd-js without
+            // diagnostics support, and dropped by serialisation.
+            testStatus.push({
+              id: test.id,
+              status: "fail",
+              diagnostics: test.diagnostics,
+              error: `${err.message} (at ${window.location.href})`,
+            });
           },
           onSkip: (test) => {
             test.status = "done";

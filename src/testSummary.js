@@ -1,4 +1,5 @@
 import { buildTestPath } from './buildTestPath.js';
+import { formatFailureDiagnostics } from './failureDiagnostics.js';
 
 /**
  * Display name for one test result.
@@ -55,6 +56,11 @@ export function formatRunComplete({
     for (const failure of failures) {
       const testPath = resolvePath(failure, handlers);
       lines.push(`    × ${testPath}`);
+      // Above the error, not below: a twd-js failure message can carry a full
+      // accessible-roles dump, which would bury the block underneath it.
+      for (const row of formatFailureDiagnostics(failure.diagnostics)) {
+        lines.push(`      ${row}`);
+      }
       if (failure.error) {
         lines.push(`      ${String(failure.error).replace(/\n/g, '\n      ')}`);
       }

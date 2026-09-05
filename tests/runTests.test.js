@@ -1555,3 +1555,69 @@ describe('runTests sharded behavior changes', () => {
     expect(report.contracts.results).toEqual([{ alias: 'a' }]);
   });
 });
+
+// The in-page onFail is serialised into the browser, so the suite never runs it
+// by mocking page.evaluate. These drive the real callback directly against a
+// stub runner: it is the only place the diagnostics hand-off is observable.
+describe("in-page onFail diagnostics hand-off", () => {
+  let savedWindow;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    savedWindow = global.window;
+  });
+
+  afterEach(() => {
+    global.window = savedWindow;
+    vi.restoreAllMocks();
+  });
+
+  // Runs the function twd-cli hands to page.evaluate, with a stub
+  // window.__testRunner that fails one test.
+  async function runInPageFn(failingTest) {
+    const handlers = [{ id: 't1', name: 'test1', type: 'test' }];
+    const page = createMockPage({ handlers, testStatus: [] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    await runTests();
+
+    // call 0 is the enumeration pass; call 1 is the first chunk run.
+    const [inPageFn, retryCount, chunkIds] = page.evaluate.mock.calls[1];
+
+    global.window = {
+      location: { href: 'http://localhost:5173/cg-1/settings/catalog' },
+      __testRunner: class {
+        constructor(callbacks) { this.callbacks = callbacks; }
+        async runByIds() { this.callbacks.onFail(failingTest, new Error('boom')); }
+      },
+    };
+
+    return inPageFn(retryCount, chunkIds);
+  }
+
+  it("carries the raw snapshot out on the failure entry", async () => {
+    const diagnostics = {
+      location: '/cg-1/settings/catalog',
+      mockRules: { registered: 7, triggered: 6, untriggered: ['catalog'] },
+    };
+
+    const result = await runInPageFn({ id: 't1', diagnostics });
+
+    expect(result).toEqual([{
+      id: 't1',
+      status: 'fail',
+      diagnostics,
+      error: 'boom (at http://localhost:5173/cg-1/settings/catalog)',
+    }]);
+  });
+
+  // twd-js 1.9.0 and earlier hang nothing off the handler. The entry must still
+  // be well-formed, and the error text unchanged.
+  it("leaves the entry intact when twd-js sends no snapshot", async () => {
+    const result = await runInPageFn({ id: 't1' });
+
+    expect(result[0].diagnostics).toBeUndefined();
+    expect(result[0].error).toBe('boom (at http://localhost:5173/cg-1/settings/catalog)');
+  });
+});
