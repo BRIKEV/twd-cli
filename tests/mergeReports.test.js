@@ -249,3 +249,53 @@ describe('reportTotals', () => {
     expect(reportTotals(merged)).toEqual({ executed: 2, notRun: 0, expected: 2, consistent: true });
   });
 });
+
+// A failure's diagnostics snapshot is written by the shard that ran the test
+// and rendered by whoever prints the merged summary, so it has to survive the
+// merge and a JSON round-trip (embedded newlines in `error` included).
+describe('mergeRunReports diagnostics', () => {
+  const diagnostics = {
+    location: '/cg-1/settings/catalog',
+    mockRules: { registered: 7, triggered: 6, untriggered: ['catalog'] },
+  };
+
+  it('carries the snapshot through the merge on the failing shard', () => {
+    const merged = mergeRunReports([
+      makeReport(1, {
+        tests: [{ id: 'r1-t', path: 'Login > a', index: 0, status: 'pass' }],
+      }),
+      makeReport(2, {
+        failed: 1,
+        tests: [{
+          id: 'r2-t',
+          path: 'Login > b',
+          index: 1,
+          status: 'fail',
+          diagnostics,
+          error: 'AssertionError: expected 0 rows\n  at Object.<anonymous>',
+        }],
+      }),
+    ]);
+
+    const failed = merged.tests.find((t) => t.status === 'fail');
+    expect(failed.diagnostics).toEqual(diagnostics);
+
+    const roundTripped = JSON.parse(JSON.stringify(merged));
+    const after = roundTripped.tests.find((t) => t.status === 'fail');
+    expect(after.diagnostics).toEqual(diagnostics);
+    expect(after.error).toContain('\n');
+  });
+
+  // Shards produced by a twd-js without diagnostics merge unchanged.
+  it('merges reports that carry no snapshot at all', () => {
+    const merged = mergeRunReports([
+      makeReport(1, {
+        failed: 1,
+        tests: [{ id: 'r1-t', path: 'Login > a', index: 0, status: 'fail', error: 'boom' }],
+      }),
+      makeReport(2),
+    ]);
+
+    expect(merged.tests.find((t) => t.status === 'fail').diagnostics).toBeUndefined();
+  });
+});
