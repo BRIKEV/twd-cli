@@ -209,6 +209,9 @@ jobs:
 |-------|---------|-------------|
 | `working-directory` | `.` | Directory where `twd.config.json` lives |
 | `contract-report` | `false` | Post contract validation summary as a PR comment |
+| `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. See [Sharding](#sharding-across-ci-jobs) |
+| `report-dir` | `.twd/run` | Where the shard report is written. Only used when `shard` is set |
+| `upload-report` | `true` | Upload the shard report as an artifact named `twd-run-<index>`, the layout `twd-cli merge` expects. Only used when `shard` is set |
 
 #### With code coverage
 
