@@ -1,6 +1,10 @@
 {
   "name": "twd-cli",
   "version": "1.6.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BRIKEV/twd-cli.git"
+  },
   "description": "CLI tool for running TWD tests with Puppeteer",
   "type": "module",
   "main": "src/index.js",
