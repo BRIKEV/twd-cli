@@ -42,10 +42,27 @@ function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
       .mockResolvedValueOnce(handlers) // enumeration pass returns handler metadata
       .mockResolvedValue(testStatus),  // each chunk run returns its testStatus array
     exposeFunction: vi.fn(),
+    evaluateOnNewDocument: vi.fn(),
     setViewport: vi.fn(),
     addStyleTag: vi.fn(),
     screencast: vi.fn().mockResolvedValue(recorder ?? { stop: vi.fn() }),
   };
+}
+
+// Runs a function destined for evaluateOnNewDocument against a stand-in window,
+// and hands back what it wrote.
+function runInjected(inject, flags) {
+  const had = 'window' in globalThis;
+  const previous = globalThis.window;
+  const win = {};
+  globalThis.window = win;
+  try {
+    inject(flags);
+  } finally {
+    if (had) globalThis.window = previous;
+    else delete globalThis.window;
+  }
+  return win;
 }
 
 function createMockBrowser(page) {
@@ -66,6 +83,8 @@ const defaultMockConfig = {
   retryCount: 2,
   maxFailures: 10,
   chunkSize: 50,
+  viewport: { width: 1280, height: 800 },
+  snapshotDir: '__twd_snapshots__',
 };
 
 describe("runTests", () => {
@@ -203,6 +222,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -280,6 +301,8 @@ describe("runTests", () => {
 
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -349,6 +372,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -371,6 +396,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn().mockResolvedValueOnce(registry),
@@ -396,6 +423,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -422,6 +451,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -526,6 +557,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -561,6 +594,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -589,6 +624,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -621,6 +658,8 @@ describe("runTests", () => {
     ];
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -651,6 +690,8 @@ describe("runTests", () => {
     timeoutError.name = 'ProtocolError';
     const page = {
       goto: vi.fn(),
+      evaluateOnNewDocument: vi.fn(),
+      setViewport: vi.fn(),
       waitForSelector: vi.fn(),
       exposeFunction: vi.fn(),
       evaluate: vi.fn()
@@ -707,6 +748,60 @@ describe("runTests recording", () => {
     vi.restoreAllMocks();
   });
 
+  it("injects the snapshot flags before navigating, never after", async () => {
+    // Order is the whole point. evaluateOnNewDocument runs before any script on
+    // the page, so matchLayout sees the flags on first read. Doing this after
+    // goto would set them too late and every snapshot would silently skip.
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.evaluateOnNewDocument).toHaveBeenCalled();
+    expect(page.evaluateOnNewDocument.mock.invocationCallOrder[0])
+      .toBeLessThan(page.goto.mock.invocationCallOrder[0]);
+  });
+
+  it("turns snapshots on and both modes off by default", async () => {
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    const [inject, flags] = page.evaluateOnNewDocument.mock.calls[0];
+    expect(flags).toEqual({ update: false, ci: false });
+
+    // The injected function is serialised into the browser, so run it here
+    // against a stand-in global to see what it actually sets.
+    expect(runInjected(inject, flags)).toEqual({ __TWD_SNAPSHOTS__: true });
+    expect(runInjected(inject, { update: true, ci: false })).toEqual({
+      __TWD_SNAPSHOTS__: true,
+      __TWD_UPDATE_SNAPSHOTS__: true,
+    });
+    expect(runInjected(inject, { update: false, ci: true })).toEqual({
+      __TWD_SNAPSHOTS__: true,
+      __TWD_SNAPSHOT_CI__: true,
+    });
+  });
+
+  it("passes --update-snapshots and --ci through to the page", async () => {
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ updateSnapshots: true, ci: true });
+
+    expect(page.evaluateOnNewDocument.mock.calls[0][1]).toEqual({ update: true, ci: true });
+  });
+
   it("does not touch any recording API when recording is disabled", async () => {
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     const page = createMockPage({
@@ -717,9 +812,11 @@ describe("runTests recording", () => {
 
     await runTests();
 
-    expect(page.setViewport).not.toHaveBeenCalled();
     expect(page.addStyleTag).not.toHaveBeenCalled();
     expect(page.screencast).not.toHaveBeenCalled();
+    // The viewport is no longer a recording-only concern: every run gets an
+    // explicit one so layout snapshots are reproducible.
+    expect(page.setViewport).toHaveBeenCalledWith({ width: 1280, height: 800 });
   });
 
   it("sets the viewport, injects framing and starts the screencast when enabled", async () => {

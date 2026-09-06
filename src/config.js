@@ -32,6 +32,15 @@ export const DEFAULT_RECORD = {
   ffmpegPath: 'ffmpeg',
 };
 
+// The viewport every run gets, snapshots or not. Layout snapshots are only
+// reproducible if the size is fixed and explicit: relying on puppeteer's
+// implicit default would mean a puppeteer upgrade could change it and
+// invalidate every committed reference at once, silently.
+//
+// Deliberately NOT record.viewport, which is the video's dimensions and means
+// something different. When recording, that one still wins.
+export const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+
 const DEFAULT_CONFIG = {
   url: 'http://localhost:5173',
   timeout: 10000,
@@ -44,6 +53,10 @@ const DEFAULT_CONFIG = {
   protocolTimeout: 300000,
   maxFailures: 10,
   chunkSize: 10,
+  viewport: DEFAULT_VIEWPORT,
+  // Must match the `dir` given to the twdSnapshot vite plugin. Two processes
+  // that never talk to each other, so this duplication cannot be designed away.
+  snapshotDir: '__twd_snapshots__',
   record: DEFAULT_RECORD,
 };
 
@@ -58,6 +71,10 @@ export function loadConfig() {
       return {
         ...DEFAULT_CONFIG,
         ...userConfig,
+        // Two levels, like record.viewport below: a flat spread would let
+        // `{ "viewport": { "width": 375 } }` drop the height and hand puppeteer
+        // an undefined.
+        viewport: { ...DEFAULT_VIEWPORT, ...(userConfig.viewport || {}) },
         record: {
           ...DEFAULT_RECORD,
           ...userRecord,
