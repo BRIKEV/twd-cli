@@ -14,6 +14,12 @@ export function parseRunArgs(argv) {
   const record = {};
   let shard = null;
   let reportDir = null;
+  // Two separate flags on purpose, the way Jest separates them. They close two
+  // different holes: --update-snapshots rewrites references that already exist,
+  // --ci forbids creating one that does not. The precedence between them is
+  // decided in twd-js, which is the only side that has fetched the reference.
+  let updateSnapshots = false;
+  let ci = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -32,6 +38,10 @@ export function parseRunArgs(argv) {
       const { value, consumed } = readValue(argv, token, '--report-dir', i);
       if (value !== undefined) reportDir = value;
       i += consumed - 1;
+    } else if (token === '--update-snapshots') {
+      updateSnapshots = true;
+    } else if (token === '--ci') {
+      ci = true;
     } else if (token === '--record') {
       record.enabled = true;
     } else if (token === '--record-dir' || token.startsWith('--record-dir=')) {
@@ -55,7 +65,7 @@ export function parseRunArgs(argv) {
     }
   }
 
-  return { testFilters, record, shard, reportDir };
+  return { testFilters, record, shard, reportDir, updateSnapshots, ci };
 }
 
 // `twd-cli merge <dir> [--out <path>]`. The directory is the first positional

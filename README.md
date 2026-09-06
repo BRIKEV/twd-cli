@@ -95,6 +95,8 @@ Create a `twd.config.json` file in your project root:
 | `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+| `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
+| `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
 
 **Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
@@ -140,6 +142,69 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | `ffmpegPath` | string | `"ffmpeg"` | Path to the binary if it is not on your `PATH` |
 
 Full explanations, including why `postRoll` is on by default and the measured frame rate cost of `speed`, are in the [Recording Runs](https://brikev.github.io/twd/recording) docs.
+
+## Layout snapshots (beta)
+
+`twd-js` 1.10.0 adds `twd.matchLayout`, which watches the **geometry** of a page
+and fails when it moves. It is off in the browser sidebar on purpose, because
+the sidebar resizes the page and a developer's window is an arbitrary size, so
+**twd-cli is where a layout snapshot is actually decided.**
+
+```bash
+# Compare against the committed references
+npx twd-cli run
+
+# Accept the current layout as the new reference
+npx twd-cli run --update-snapshots
+
+# A missing reference is a failure, never created
+npx twd-cli run --ci
+```
+
+### The two flags are separate on purpose
+
+| Flag | What it does |
+|------|--------------|
+| `--update-snapshots` | Rewrites references that already exist. Without it, a changed layout fails, which is the point |
+| `--ci` | Forbids *creating* a reference. Without it, a brand new test writes its own baseline on the first CI run and passes forever, and nobody finds out |
+
+They close two different holes, which is why they are two flags rather than one
+mode. `--ci` outranks `--update-snapshots`: both set, with no reference on disk,
+is a failure and not a write.
+
+### Seeing what changed
+
+A failure writes `<name>.failed.png` next to the reference: your page as it
+rendered, with the rows that diverged boxed in red. In CI the machine that
+produced it is gone by the time anyone looks, so twd-cli also writes a
+self-contained **`.twd/snapshot-report.html`** with every capture embedded.
+
+One file, one artifact, opens in any browser:
+
+```yaml
+- name: Upload layout snapshot failures
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: layout-snapshots
+    path: .twd/snapshot-report.html
+```
+
+Captures from earlier runs are cleared before each run, so the report only ever
+shows failures from the run you are looking at. The committed `.snap` references
+next to them are never touched.
+
+### Two things to know
+
+**The viewport changed.** twd-cli now sets an explicit viewport on every run
+(`1280x800` by default), not just when recording. Before, a normal run inherited
+Puppeteer's implicit size. A test that happened to depend on the old size can
+start behaving differently. Set `viewport` in `twd.config.json` to pin your own.
+
+**`snapshotDir` has to match the Vite plugin.** twd-cli and the `twdSnapshot`
+plugin are separate processes that never talk, so the directory is configured
+twice. If the report comes out empty when you expected failures, this is the
+first thing to check.
 
 ## How It Works
 

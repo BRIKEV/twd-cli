@@ -35,6 +35,8 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      viewport: { width: 1280, height: 800 },
+      snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
@@ -63,6 +65,8 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      viewport: { width: 1280, height: 800 },
+      snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
@@ -91,7 +95,12 @@ describe('loadConfig', () => {
 
     const config = loadConfig();
 
-    expect(config).toEqual({ ...userConfig, record: DEFAULT_RECORD });
+    expect(config).toEqual({
+      ...userConfig,
+      viewport: { width: 1280, height: 800 },
+      snapshotDir: '__twd_snapshots__',
+      record: DEFAULT_RECORD,
+    });
   });
 
   it('should return defaults and warn when config file has invalid JSON', () => {
@@ -114,6 +123,8 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      viewport: { width: 1280, height: 800 },
+      snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -275,4 +286,57 @@ describe('loadConfig', () => {
     expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
   });
 
+});
+describe('loadConfig snapshot settings', () => {
+  const mockCwd = '/mock/project';
+  const originalCwd = process.cwd;
+
+  beforeEach(() => {
+    process.cwd = vi.fn(() => mockCwd);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    process.cwd = originalCwd;
+  });
+
+  const withConfig = (userConfig) => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(userConfig));
+  };
+
+  it('defaults the viewport to 1280x800', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    expect(loadConfig().viewport).toEqual({ width: 1280, height: 800 });
+  });
+
+  it('defaults snapshotDir to __twd_snapshots__', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    expect(loadConfig().snapshotDir).toBe('__twd_snapshots__');
+  });
+
+  it('merges a partial viewport over the default instead of wiping it', () => {
+    // A flat spread would drop `height` and hand puppeteer an undefined, so the
+    // viewport gets the same two level merge record.viewport already has.
+    withConfig({ viewport: { width: 375 } });
+
+    expect(loadConfig().viewport).toEqual({ width: 375, height: 800 });
+  });
+
+  it('lets snapshotDir be overridden', () => {
+    withConfig({ snapshotDir: 'snapshots' });
+
+    expect(loadConfig().snapshotDir).toBe('snapshots');
+  });
+
+  it('keeps record.viewport independent of the top level viewport', () => {
+    // record.viewport is the video's dimensions and means something different.
+    withConfig({ viewport: { width: 375, height: 667 } });
+
+    const config = loadConfig();
+    expect(config.viewport).toEqual({ width: 375, height: 667 });
+    expect(config.record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  });
 });

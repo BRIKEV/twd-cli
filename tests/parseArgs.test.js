@@ -3,7 +3,7 @@ import { parseRunArgs, parseMergeArgs } from "../src/parseArgs.js";
 
 describe("parseRunArgs", () => {
   it("returns empty filters when no args", () => {
-    expect(parseRunArgs([])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null });
+    expect(parseRunArgs([])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
   });
 
   it("parses a single --test <value>", () => {
@@ -12,6 +12,8 @@ describe("parseRunArgs", () => {
       record: {},
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
@@ -21,6 +23,8 @@ describe("parseRunArgs", () => {
       record: {},
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
@@ -30,11 +34,13 @@ describe("parseRunArgs", () => {
       record: {},
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
   it("ignores a trailing --test with no value", () => {
-    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null });
+    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
   });
 
   it("ignores unknown tokens", () => {
@@ -43,6 +49,8 @@ describe("parseRunArgs", () => {
       record: {},
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
@@ -81,6 +89,8 @@ describe("parseRunArgs", () => {
       record: { enabled: true, speed: 0.5 },
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
@@ -105,6 +115,8 @@ describe("parseRunArgs", () => {
       record: { enabled: true, pace: 500 },
       shard: null,
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
 
@@ -140,8 +152,40 @@ describe('parseRunArgs shard and report flags', () => {
       record: { enabled: true },
       shard: { index: 2, total: 4 },
       reportDir: null,
+      updateSnapshots: false,
+      ci: false,
     });
   });
+
+  it("defaults both snapshot flags to false", () => {
+    const { updateSnapshots, ci } = parseRunArgs([]);
+    expect(updateSnapshots).toBe(false);
+    expect(ci).toBe(false);
+  });
+
+  it("parses --update-snapshots", () => {
+    expect(parseRunArgs(['--update-snapshots']).updateSnapshots).toBe(true);
+  });
+
+  it("parses --ci", () => {
+    expect(parseRunArgs(['--ci']).ci).toBe(true);
+  });
+
+  it("parses both snapshot flags together", () => {
+    // They are two different holes and both can be open at once. twd-js decides
+    // the precedence; the CLI only reports what was asked for.
+    const { updateSnapshots, ci } = parseRunArgs(['--update-snapshots', '--ci']);
+    expect(updateSnapshots).toBe(true);
+    expect(ci).toBe(true);
+  });
+
+  it("leaves the other flags alone when snapshot flags are present", () => {
+    const result = parseRunArgs(['--ci', '--test', 'Login', '--report-dir', './out']);
+    expect(result.testFilters).toEqual(['Login']);
+    expect(result.reportDir).toBe('./out');
+    expect(result.ci).toBe(true);
+  });
+
 });
 
 describe('parseMergeArgs', () => {

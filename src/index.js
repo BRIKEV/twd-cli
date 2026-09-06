@@ -14,6 +14,7 @@ import { resolveRecordFilename } from './recordFilename.js';
 import { selectShardIds } from './shard.js';
 import { buildRunReport } from './runReport.js';
 import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
+import { writeSnapshotReport, clearFailureCaptures } from './snapshotReport.js';
 import {
   assertFfmpegAvailable,
   applyRecordingFraming,
@@ -46,7 +47,14 @@ function recordedFileSize(absPath) {
 }
 
 export async function runTests(options = {}) {
-  const { testFilters = [], recordOverrides = {}, shard = null, reportDir = null } = options;
+  const {
+    testFilters = [],
+    recordOverrides = {},
+    shard = null,
+    reportDir = null,
+    updateSnapshots = false,
+    ci = false,
+  } = options;
   const sharded = Boolean(shard);
   let browser;
   let config;
@@ -96,9 +104,12 @@ export async function runTests(options = {}) {
 
     const page = await browser.newPage();
 
-    if (recording) {
-      await page.setViewport(record.viewport);
-    }
+    // Every run gets an explicit viewport, not just a recorded one. Layout
+    // snapshots are only reproducible if the size is fixed and stated: relying
+    // on puppeteer's implicit default would mean an upgrade could change it and
+    // invalidate every committed reference at once, without a word.
+    // record.viewport still wins while recording, since it sets the video size.
+    await page.setViewport(recording ? record.viewport : config.viewport);
 
     // Register mock collector for contract validation
     const collectedMocks = new Map();
@@ -113,6 +124,21 @@ export async function runTests(options = {}) {
         collectedMocks.set(dedupKey, { ...mock, occurrence: count });
       });
     }
+
+    // evaluateOnNewDocument, never evaluate: this runs before any script on the
+    // page, so the flags are already set by the time matchLayout reads them.
+    // The twdSnapshot vite plugin sets its own flag with ??= precisely so this
+    // injection wins. __TWD_SNAPSHOTS__ is always on here because twd-cli is
+    // where a layout snapshot is actually decided.
+    await page.evaluateOnNewDocument((flags) => {
+      window.__TWD_SNAPSHOTS__ = true;
+      if (flags.update) window.__TWD_UPDATE_SNAPSHOTS__ = true;
+      if (flags.ci) window.__TWD_SNAPSHOT_CI__ = true;
+    }, { update: updateSnapshots, ci });
+
+    // Drop captures from earlier runs before this one can add its own, so the
+    // report cannot show a failure that has since been fixed.
+    clearFailureCaptures(path.resolve(workingDir, config.snapshotDir));
 
     // Navigate to your development server
     startedAt = Date.now();
@@ -436,6 +462,20 @@ export async function runTests(options = {}) {
       stoppedEarly,
       maxFailures: config.maxFailures,
     }));
+
+    const snapshotReport = writeSnapshotReport(
+      path.resolve(workingDir, config.snapshotDir),
+      '.twd'
+    );
+    if (snapshotReport) {
+      const skipped = snapshotReport.skipped.length
+        ? `, ${snapshotReport.skipped.length} could not be read`
+        : '';
+      console.log(
+        `Layout snapshot failures: ${snapshotReport.count} captured${skipped}. ` +
+          `Open ${snapshotReport.reportPath}`
+      );
+    }
 
     // Written last, and only for a sharded run. A run that threw never gets
     // here on purpose: its artifact stays absent, and `merge` reports the gap as

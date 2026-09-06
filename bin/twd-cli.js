@@ -10,13 +10,16 @@ const command = process.argv[2];
 
 if (command === 'run') {
   try {
-    const { testFilters, record, shard, reportDir } = parseRunArgs(process.argv.slice(3));
+    const { testFilters, record, shard, reportDir, updateSnapshots, ci } =
+      parseRunArgs(process.argv.slice(3));
     const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
       testFilters,
       recordOverrides: record,
       shard,
       reportDir,
+      updateSnapshots,
+      ci,
     });
     process.exit(hasFailures ? 1 : 0);
   } catch (error) {
