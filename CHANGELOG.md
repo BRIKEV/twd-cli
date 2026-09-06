@@ -1,3 +1,23 @@
+## <small>1.6.0 (2026-09-06)</small>
+
+* feat(snapshots): `--update-snapshots` and `--ci` drive `twd.matchLayout` headlessly. `matchLayout` is off in the browser sidebar on purpose, because the sidebar resizes the page and a developer's window is an arbitrary size, so twd-cli is where a layout snapshot is actually decided
+* feat(snapshots): the two flags stay separate the way Jest separates them, because they close two different holes. `--update-snapshots` rewrites references that already exist; `--ci` forbids *creating* one, so a brand new test cannot write its own baseline on the first CI run and pass forever without anyone noticing
+* feat(snapshots): a run writes a self-contained `.twd/snapshot-report.html` with every failure capture embedded. In CI the machine that produced the PNGs is gone by the time anyone looks, so this is one file, one artifact, opened in any browser rather than a zip of loose images matched up by filename
+* feat(snapshots): captures from earlier runs are cleared before each run. twd-js overwrites a capture on failure but never removes one when that snapshot later passes, so without the sweep a fixed layout keeps its old capture forever and the report shows a failure that no longer exists. Only `*.failed.png` is touched; the committed `.snap` references next to them are not
+* feat(diagnostics): a failing test now reports which mock rules never fired, above the error message rather than below, because a twd-js failure message can carry a full accessible-roles dump that would bury it (#20)
+* chore(deps): puppeteer 25.10.0 and a clean `npm audit` (#19)
+* docs: list the sharding inputs in the action inputs table (#18)
+* note: **behaviour change, and it is not opt-in.** `page.setViewport()` now runs on every run, not just when recording. A normal run used to inherit Puppeteer's implicit size. Layout snapshots are only reproducible if the viewport is fixed and explicit, and relying on the implicit default would mean a Puppeteer upgrade could change it and invalidate every committed reference at once, without a word. The default is `1280x800`, `viewport` in `twd.config.json` pins your own, and `record.viewport` still wins while recording
+* note: the snapshot flags need **twd-js 1.10.0 or newer**. On an older version there is no `matchLayout` to drive and the flags do nothing
+
+A normal release: `npm install twd-cli` gets it. The *layout snapshot feature* is
+the part marked beta, and it needs `twd-js` 1.10.0 or newer to do anything at
+all.
+
+Unlike 1.5.0, this one does **not** come with a "no behaviour change unless you
+opt in" guarantee. The viewport is now set explicitly on every run, so read that
+note above even if you never touch a layout snapshot.
+
 ## <small>1.5.0 (2026-08-25)</small>
 
 * feat(shard): `--shard <i>/<n>` runs one slice of the suite so a run can be split across parallel CI jobs. Each shard discovers the whole suite itself and takes every nth test, so the test count never has to be known in advance
