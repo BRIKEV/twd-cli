@@ -198,7 +198,7 @@ describe('loadConfig', () => {
       dir: './twd-artifacts',
       filename: null,
       format: 'mp4',
-      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      viewport: { width: 1280, height: 1600, deviceScaleFactor: 1 },
       fps: 30,
       speed: 1,
       pace: 300,
@@ -220,7 +220,7 @@ describe('loadConfig', () => {
     expect(record.postRoll).toBe(0);
     expect(record.preRoll).toBe(0);
     expect(record.format).toBe('mp4');
-    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    expect(record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
   });
 
   it('merges a partial record block instead of replacing it', () => {
@@ -239,7 +239,7 @@ describe('loadConfig', () => {
     expect(record.speed).toBe(1);
     expect(record.hideSidebar).toBe(true);
     expect(record.ffmpegPath).toBe('ffmpeg');
-    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    expect(record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
   });
 
   it('merges a partial record.viewport instead of replacing it', () => {
@@ -250,7 +250,7 @@ describe('loadConfig', () => {
 
     expect(loadConfig().record.viewport).toEqual({
       width: 1920,
-      height: 720,
+      height: 1600,
       deviceScaleFactor: 1,
     });
   });
@@ -283,7 +283,7 @@ describe('loadConfig', () => {
     expect(record.pace).toBe(500);
     expect(record.postRoll).toBe(500);
     expect(record.format).toBe('mp4');
-    expect(record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    expect(record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
   });
 
 });
@@ -337,6 +337,6 @@ describe('loadConfig snapshot settings', () => {
 
     const config = loadConfig();
     expect(config.viewport).toEqual({ width: 375, height: 667 });
-    expect(config.record.viewport).toEqual({ width: 1280, height: 720, deviceScaleFactor: 1 });
+    expect(config.record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
   });
 });

@@ -165,7 +165,9 @@ One video per run, containing every matched test back to back in declaration ord
 
 mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
-**A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x720, versus the 800x600 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
+The recording viewport is **1280x1600** by default — deliberately taller than a screen. Puppeteer captures exactly the viewport, with no scrolling and no letterboxing, so anything below the fold is simply absent from the video and nothing in the run says so. A short default silently cropped the very content the tests asserted on. Set `record.viewport` if your app is shorter and you would rather not record empty space.
+
+**A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x1600, versus the 1280x800 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
 
 ### Recording Options
 
@@ -177,7 +179,7 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | `dir` | string | `"./twd-artifacts"` | Where the video is written |
 | `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
-| `viewport` | object | `1280x720` | Applied only when recording. `width` and `height` set the video dimensions |
+| `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even — the H.264 conversion needs it |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Post-hoc playback speed. Costs frame rate, prefer `pace` |
 | `pace` | number | `300` | Milliseconds held after each command. `0` disables |
