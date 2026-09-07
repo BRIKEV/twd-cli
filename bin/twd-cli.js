@@ -10,11 +10,12 @@ const command = process.argv[2];
 
 if (command === 'run') {
   try {
-    const { testFilters, record, shard, reportDir, updateSnapshots, ci } =
+    const { testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci } =
       parseRunArgs(process.argv.slice(3));
     const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
       testFilters,
+      changedSince,
       recordOverrides: record,
       shard,
       reportDir,
@@ -49,6 +50,9 @@ Usage:
   npx twd-cli run --test "<name>"  Run only tests whose "suite > test" path
                                    contains <name> (case-insensitive).
                                    Repeatable; multiple --test values are OR'd.
+  npx twd-cli run --changed-since <ref>
+                                   Run only the tests this branch added or
+                                   changed, relative to <ref>
   npx twd-cli run --record         Record the run to a video file
   npx twd-cli run --shard 2/4      (beta) Run only this shard's slice of the
                                    suite and write a report to ./.twd/run
@@ -59,10 +63,17 @@ Examples:
   npx twd-cli run --test "shows error"
   npx twd-cli run --test "Login" --test "Signup"
   npx twd-cli run --shard 2/4
+  npx twd-cli run --record --changed-since origin/main
   npx twd-cli merge .twd/shards
 
 Options:
   --test "<name>"        Filter tests by "suite > test" path (repeatable, OR'd)
+  --changed-since <ref>  Run only the tests this branch added or changed since
+                         <ref>, worked out from git. Unions with --test. A
+                         branch that changed no tests prints one line and
+                         exits 0 — an empty result is not a failure. Needs the
+                         base branch in the clone: in GitHub Actions set
+                         fetch-depth: 0 on actions/checkout.
   --shard <i>/<n>        (beta) Run slice i of n. Each shard discovers the
                          whole suite and takes every nth test, so the count
                          never has to be known in advance. Implies a report.

@@ -15,6 +15,9 @@ vi.mock('../src/contracts.js', () => ({
 vi.mock('../src/contractReport.js', () => ({
   printContractReport: vi.fn(),
 }));
+vi.mock('../src/changedTests.js', () => ({
+  resolveChangedTitles: vi.fn(),
+}));
 // The two ffmpeg-spawning helpers are mocked so no test needs a real binary.
 // The two hold helpers are mocked so their call ordering is observable here;
 // their real behavior is covered in tests/recorder.test.js. watchRecorder and
@@ -36,6 +39,7 @@ import puppeteer from 'puppeteer';
 import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
+import { resolveChangedTitles } from '../src/changedTests.js';
 import { assertFfmpegCapable, transcodeForPlayback, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
 
 // puppeteer's screencast returns a PassThrough fed by ffmpeg's stdout, and the
@@ -1983,5 +1987,176 @@ describe("in-page onFail diagnostics hand-off", () => {
 
     expect(result[0].diagnostics).toBeUndefined();
     expect(result[0].error).toBe('boom (at http://localhost:5173/cg-1/settings/catalog)');
+  });
+});
+
+
+describe("runTests --changed-since", () => {
+  let consoleSpy;
+  let errorSpy;
+
+  const handlers = [
+    { id: '1', name: 'adds a todo', type: 'test' },
+    { id: '2', name: 'removes a todo', type: 'test' },
+    { id: '3', name: 'shows the empty state', type: 'test' },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.mocked(resolveChangedTitles).mockReset();
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function pageWith(testStatus) {
+    return createMockPage({ handlers, testStatus });
+  }
+
+  it("resolves the ref against the working directory", async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: ['adds a todo'], files: ['a'], base: 'b' });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([{ id: '1', status: 'pass' }])));
+
+    await runTests({ changedSince: 'origin/main' });
+
+    expect(resolveChangedTitles).toHaveBeenCalledWith('origin/main', process.cwd());
+  });
+
+  it("runs only the tests the branch changed", async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({
+      titles: ['adds a todo', 'removes a todo'],
+      files: ['a'],
+      base: 'b',
+    });
+    const page = pageWith([{ id: '1', status: 'pass' }, { id: '2', status: 'pass' }]);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ changedSince: 'origin/main' });
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['1', '2']);
+  });
+
+  it("exits 0 and never opens a browser when the branch changed no tests", async () => {
+    // "This branch changed no tests" is a normal CI outcome, not a failure.
+    // Deciding it before launch also means the run needs no dev server at all,
+    // which is the other step this deletes from every caller's workflow.
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: [], files: [], base: 'b' });
+
+    await expect(runTests({ changedSince: 'origin/main' })).resolves.toBe(false);
+
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logs).toMatch(/no tests changed/i);
+    expect(logs).toMatch(/origin\/main/);
+  });
+
+  it("exits 0 when the changed titles match no registered test", async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({
+      titles: ['a test that is not registered'],
+      files: ['a'],
+      base: 'b',
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([])));
+
+    await expect(runTests({ changedSince: 'origin/main' })).resolves.toBe(false);
+  });
+
+  it("runs the union of --changed-since and --test", async () => {
+    // Filters already OR together, so there is no precedence rule to remember
+    // and --test stays usable to add one extra test to a branch's own.
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: ['adds a todo'], files: ['a'], base: 'b' });
+    const page = pageWith([{ id: '1', status: 'pass' }, { id: '3', status: 'pass' }]);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ changedSince: 'origin/main', testFilters: ['empty state'] });
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['1', '3']);
+  });
+
+  it("still warns about a --test filter that matched nothing", async () => {
+    // A typed filter is an assertion by the user, so a typo stays visible.
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: ['adds a todo'], files: ['a'], base: 'b' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([{ id: '1', status: 'pass' }])));
+
+    await runTests({ changedSince: 'origin/main', testFilters: ['typo-no-match'] });
+
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(warnings).toMatch(/typo-no-match/);
+  });
+
+  it("does not warn about computed titles that matched nothing", async () => {
+    // A changed title the suite does not register is normal and not actionable;
+    // warning about it would be noise on every run.
+    vi.mocked(resolveChangedTitles).mockReturnValue({
+      titles: ['adds a todo', 'a helper that is not a twd test'],
+      files: ['a'],
+      base: 'b',
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([{ id: '1', status: 'pass' }])));
+
+    await runTests({ changedSince: 'origin/main' });
+
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(warnings).not.toMatch(/a helper that is not a twd test/);
+  });
+
+  it("keeps exit 1 for a --test filter that matched nothing on its own", async () => {
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([])));
+
+    await expect(runTests({ testFilters: ['nothing matches'] })).resolves.toBe(true);
+  });
+
+  it("fails before launching when the ref is not in the clone", async () => {
+    vi.mocked(resolveChangedTitles).mockImplementation(() => {
+      throw new Error('origin/main is not in this clone. set `fetch-depth: 0`');
+    });
+
+    await expect(runTests({ changedSince: 'origin/main' })).rejects.toThrow(/fetch-depth: 0/);
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it("filters a recorded run too, and names the clip after the one test left", async () => {
+    // This is a filter, not a recording feature. It just happens that recording
+    // is where running the whole suite hurts most: an unfiltered recorded run is
+    // several times longer than the part a reviewer wants.
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: ['adds a todo'], files: ['a'], base: 'b' });
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: {
+        enabled: true,
+        dir: './twd-artifacts',
+        filename: null,
+        format: 'mp4',
+        viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+        fps: 30,
+        speed: 1,
+        hideSidebar: true,
+        ffmpegPath: 'ffmpeg',
+      },
+    });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 4096 });
+    const page = pageWith([{ id: '1', status: 'pass' }]);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ changedSince: 'origin/main' });
+
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['1']);
+    expect(page.screencast).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining('adds-a-todo.mp4') })
+    );
+  });
+
+  it("does not touch git when the flag is absent", async () => {
+    puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([{ id: '1', status: 'pass' }])));
+
+    await runTests();
+
+    expect(resolveChangedTitles).not.toHaveBeenCalled();
   });
 });

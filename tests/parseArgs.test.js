@@ -3,13 +3,14 @@ import { parseRunArgs, parseMergeArgs } from "../src/parseArgs.js";
 
 describe("parseRunArgs", () => {
   it("returns empty filters when no args", () => {
-    expect(parseRunArgs([])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
+    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
   });
 
   it("parses a single --test <value>", () => {
     expect(parseRunArgs(['--test', 'shows error'])).toEqual({
       testFilters: ['shows error'],
       record: {},
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -21,6 +22,7 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--test', 'Login', '--test', 'Signup'])).toEqual({
       testFilters: ['Login', 'Signup'],
       record: {},
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -32,6 +34,7 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--test=Login'])).toEqual({
       testFilters: ['Login'],
       record: {},
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -40,13 +43,14 @@ describe("parseRunArgs", () => {
   });
 
   it("ignores a trailing --test with no value", () => {
-    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
+    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
   });
 
   it("ignores unknown tokens", () => {
     expect(parseRunArgs(['--verbose', '--test', 'Login'])).toEqual({
       testFilters: ['Login'],
       record: {},
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -87,6 +91,7 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--record', '--test', 'checkout', '--record-speed=0.5'])).toEqual({
       testFilters: ['checkout'],
       record: { enabled: true, speed: 0.5 },
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -113,6 +118,7 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--record', '--test', 'checkout', '--record-pace=500'])).toEqual({
       testFilters: ['checkout'],
       record: { enabled: true, pace: 500 },
+      changedSince: null,
       shard: null,
       reportDir: null,
       updateSnapshots: false,
@@ -149,6 +155,7 @@ describe('parseRunArgs shard and report flags', () => {
   it('combines --shard with --test filters and record flags', () => {
     expect(parseRunArgs(['--shard', '2/4', '--test', 'Login', '--record'])).toEqual({
       testFilters: ['Login'],
+      changedSince: null,
       record: { enabled: true },
       shard: { index: 2, total: 4 },
       reportDir: null,
@@ -186,6 +193,41 @@ describe('parseRunArgs shard and report flags', () => {
     expect(result.ci).toBe(true);
   });
 
+});
+
+describe('parseRunArgs --changed-since', () => {
+  it('parses --changed-since in both forms', () => {
+    expect(parseRunArgs(['--changed-since', 'origin/main']).changedSince).toBe('origin/main');
+    expect(parseRunArgs(['--changed-since=origin/main']).changedSince).toBe('origin/main');
+  });
+
+  it('defaults to null when the flag is absent', () => {
+    expect(parseRunArgs([]).changedSince).toBeNull();
+  });
+
+  it('ignores a trailing --changed-since with no value', () => {
+    expect(parseRunArgs(['--changed-since']).changedSince).toBeNull();
+  });
+
+  it('does not swallow the flag that follows a valueless --changed-since', () => {
+    const result = parseRunArgs(['--changed-since', '--record']);
+    // A ref never starts with `--`, so treating the next flag as the value
+    // would both lose --record and hand git something it cannot resolve.
+    expect(result.changedSince).toBeNull();
+    expect(result.record.enabled).toBe(true);
+  });
+
+  it('accepts a ref containing a slash, a dot or a dash', () => {
+    expect(parseRunArgs(['--changed-since', 'origin/release-1.2']).changedSince)
+      .toBe('origin/release-1.2');
+  });
+
+  it('composes with --test rather than replacing it', () => {
+    const result = parseRunArgs(['--changed-since', 'main', '--test', 'Login']);
+
+    expect(result.changedSince).toBe('main');
+    expect(result.testFilters).toEqual(['Login']);
+  });
 });
 
 describe('parseMergeArgs', () => {

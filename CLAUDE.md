@@ -20,9 +20,13 @@ The codebase is a small ESM-only Node.js CLI. `bin/twd-cli.js` and `src/index.js
 
 **`bin/twd-cli.js`**: CLI entry point. Parses `process.argv` for the `run` command via `src/parseArgs.js`, calls `runTests()`, and exits with code 0 (pass) or 1 (failure).
 
+**`src/changedTests.js`**: `resolveChangedTitles(ref, cwd)` shells out to git (`execFileSync` with an argument array, never a string — a ref is user input) and returns the `it()` titles this branch added or changed, to feed the same filter path `--test` uses. `extractTitles(source)` is the pure half. Test files are identified by the **suffix** `*.twd.test.*`, never by directory: the examples use `src/twd-tests`, `app/twd-tests` and `src/twd-test` between them, and the suffix also keeps a project's Vitest suite — which uses `it()` too — from contributing titles. Diffs to the **working tree** (`git diff <base>`, no second ref) and adds untracked test files, so uncommitted work counts; in CI the tree is clean and this is identical to `<base> HEAD`.
+
 **`src/parseArgs.js`**: `parseRunArgs(argv)` returns `{ testFilters, record }`. Supports `--test` (repeatable substring filter) and the recording flags `--record`, `--record-dir`, `--record-speed`. Each accepts both `--flag value` and `--flag=value`. The returned `record` object is passed to `runTests()` as `recordOverrides` and wins over the config file.
 
 **`src/config.js`**: `loadConfig()` reads `twd.config.json` from `process.cwd()`, merges it with defaults (url, timeout, coverage, coverageDir, nycOutputDir, headless, puppeteerArgs, retryCount, protocolTimeout, maxFailures, chunkSize, record), and returns the merged config. Falls back to defaults if the file is missing or unparseable.
+
+`--changed-since` deliberately makes a zero-match run exit **0**: it is a query, and an empty result is a normal CI outcome. `--test` keeps its exit 1, because a filter you typed is an assertion and a typo must not look like a pass. For the same reason the "matched no tests" warning is raised only for filters the user actually typed — a computed title matching nothing is unactionable noise.
 
 `protocolTimeout` (default `300000`, 5 min) is passed to `puppeteer.launch` and bounds each chunk's CDP call. `maxFailures` (default `10`) stops the run after that many cumulative test failures; set to `0` to disable. `chunkSize` (default `10`) controls how many tests run per browser call.
 
@@ -37,7 +41,7 @@ The codebase is a small ESM-only Node.js CLI. `bin/twd-cli.js` and `src/index.js
 6. Waits for `#twd-sidebar-root` selector (indicates app + TWD are ready)
 7. Injects the framing stylesheet when recording, hiding the sidebar and resetting the html margin twd-js sets inline
 8. Enumerates all registered test handlers and computes pre-order execution order
-9. Resolves `--test` filters into the id list to run
+9. Resolves `--test` filters and any `--changed-since` titles into the id list to run, as one OR'd set. `--changed-since` itself is resolved back at step 1, **before** the ffmpeg probe and the browser launch, so a branch that changed no tests exits 0 needing neither a dev server nor ffmpeg
 10. Starts the screencast when recording. This happens **after** filter resolution, because `page.screencast()` fixes the output path up front and the filename is derived from the tests that survived the filter (`src/recordFilename.js`)
 11. Runs tests in ordered chunks via `runByIds(chunkIds)`, with chunk size controlled by config; accumulates results in Node so the run can stop after `maxFailures` failures and partial results survive a timeout or crash
 12. Stops the recorder through `stopRecording()`, which never awaits a stop whose encoder is already known dead, then reports the artifact — but only after checking the file has bytes on disk. A resolved `stop()` is not evidence of a usable video (see the recording notes below). An mp4 is converted to H.264 before its size is read
