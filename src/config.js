@@ -6,11 +6,24 @@ export const DEFAULT_RECORD = {
   dir: './twd-artifacts',
   filename: null,
   format: 'mp4',
+  // 1600 tall, not 720. The viewport decides what the video contains: puppeteer
+  // captures exactly it, with no scrolling and no letterboxing, so anything
+  // below the fold is simply absent. At 720 a recording of twd-vue-example cut
+  // the todos page just below the filter buttons, which put the list the tests
+  // assert on off-frame — a clip that looked fine and showed none of the
+  // behaviour under test. Nothing in the run says the frame was cropped, so only
+  // a human watching the video catches it. A taller default is wrong in the
+  // other direction for apps that fit, but it wastes encoder time on empty
+  // space, which is the cheaper mistake.
+  //
+  // Even numbers on both axes are not optional: the H.264 conversion in
+  // recorder.js uses yuv420p, which requires them.
+  //
   // deviceScaleFactor stays at 1 on purpose. Puppeteer measures the recording
   // dimensions with deviceScaleFactor forced to 0, so a higher factor never
   // reaches the video, but it is live on the page during the run (srcset picks
   // 2x assets, dpr-branching code takes another path). All cost, no benefit.
-  viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+  viewport: { width: 1280, height: 1600, deviceScaleFactor: 1 },
   fps: 30,
   speed: 1,
   // Milliseconds twd-js holds after each command, driven through
