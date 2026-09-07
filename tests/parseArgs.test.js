@@ -77,6 +77,8 @@ describe("parseRunArgs", () => {
   });
 
   it("ignores a non-numeric or non-positive --record-speed", () => {
+    // Unlike pace, 0 stays rejected here: speed is a playback multiplier, so a
+    // speed of 0 is meaningless rather than "off".
     expect(parseRunArgs(['--record-speed', 'slow']).record).toEqual({});
     expect(parseRunArgs(['--record-speed', '0']).record).toEqual({});
     expect(parseRunArgs(['--record-speed', '-1']).record).toEqual({});
@@ -104,10 +106,18 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--record-pace=250']).record).toEqual({ pace: 250 });
   });
 
-  it("ignores a non-numeric or non-positive --record-pace", () => {
+  it("ignores a non-numeric or negative --record-pace", () => {
     expect(parseRunArgs(['--record-pace', 'slow']).record).toEqual({});
-    expect(parseRunArgs(['--record-pace', '0']).record).toEqual({});
     expect(parseRunArgs(['--record-pace', '-1']).record).toEqual({});
+  });
+
+  it("accepts --record-pace 0, the documented way to turn pacing off", () => {
+    // 0 is a meaningful value here, not a rejected input. DEFAULT_RECORD.pace
+    // says "Set 0 to disable", and the recording docs give this exact command
+    // as the way to get the fastest possible recorded run. Grouping it with
+    // negatives and non-numerics is what made the flag a silent no-op.
+    expect(parseRunArgs(['--record-pace', '0']).record).toEqual({ pace: 0 });
+    expect(parseRunArgs(['--record-pace=0']).record).toEqual({ pace: 0 });
   });
 
   it("ignores a trailing --record-pace with no value", () => {
