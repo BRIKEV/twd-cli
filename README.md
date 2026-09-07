@@ -337,6 +337,99 @@ The action runs in the same job, so coverage data is available for subsequent st
         run: npm run collect:coverage:text
 ```
 
+### Recording a PR's tests (the `record` action)
+
+The sibling of the `run` action, for clips rather than results. It installs a
+known-good ffmpeg, records, and uploads the result:
+
+```yaml
+- uses: BRIKEV/twd-cli/.github/actions/record@main
+  with:
+    changed-since: ${{ github.event.pull_request.base.sha }}
+```
+
+`changed-since` is what keeps the clip watchable — it records only the tests the
+branch touched, rather than the whole suite. See
+[Running only what this branch changed](#running-only-what-this-branch-changed).
+
+#### Record action inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `working-directory` | `.` | Directory where `twd.config.json` lives |
+| `changed-since` | (empty) | A ref. Records only the tests changed since it. Needs `fetch-depth: 0` on checkout. Mutually exclusive with `tests` |
+| `tests` | (empty) | Newline-separated test titles, one `--test` each. Mutually exclusive with `changed-since` |
+| `pace` | (empty) | Passed to `--record-pace`. Empty uses the CLI default of 300; `0` disables pacing |
+| `install-ffmpeg` | `true` | Install ffmpeg 8.x. Set `false` to use whatever is on `PATH` |
+| `upload-artifact` | `true` | Upload the clips as an artifact |
+| `artifact-name` | `twd-recording` | Name of the artifact |
+| `retention-days` | `14` | How long to keep it |
+
+#### Record action outputs
+
+| Output | Description |
+|--------|-------------|
+| `clip-count` | How many clips were produced. **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
+| `dir` | Where the clips are, for a caller that wants to do its own upload |
+| `artifact-url` | URL of the artifact, when the action uploaded it |
+
+#### Why it installs ffmpeg
+
+Because the distro build is not good enough, and finding that out the hard way is
+expensive. Puppeteer's screencast passes `-movflags hybrid_fragmented`, which
+arrived after ffmpeg 7 — `apt-get install ffmpeg` on `ubuntu-24.04` gets you
+6.1.1, which rejects it. The action installs an 8.1.x build whose `gpl` variant
+also carries `libx264`, which the H.264 conversion needs. Set
+`install-ffmpeg: false` if you manage your own; `twd-cli` checks the binary can
+actually do the job before it launches a browser either way.
+
+Only Linux runners get the bundled build. On macOS or Windows the step warns and
+skips, so install ffmpeg 8+ yourself there.
+
+#### Reference workflow
+
+Recording is triggered by a label here, but that part is policy — record every PR
+to `main` if you prefer. The trigger, the PR comment and the dev server stay in
+your workflow rather than the action, exactly as they do for `run`:
+
+```yaml
+name: Record a PR's tests
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  record:
+    if: github.event.label.name == 'record'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15          # a hung recording must not cost the whole job
+    permissions: { contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0         # --changed-since needs history
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: |
+          nohup npm run dev > vite.log 2>&1 &
+          npx wait-on http://localhost:5173
+      - uses: BRIKEV/twd-cli/.github/actions/record@main
+        id: rec
+        continue-on-error: true  # a clip is optional; the PR it describes is not
+        with:
+          changed-since: ${{ github.event.pull_request.base.sha }}
+      - if: steps.rec.outputs.clip-count != '0'
+        run: gh pr comment "$PR" --body "${{ steps.rec.outputs.clip-count }} clip(s): ${{ steps.rec.outputs.artifact-url }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+```
+
+The `timeout-minutes` and `continue-on-error` are belt, not workaround. A
+recording is always optional; the pull request it describes is not.
+
 ### Custom setup (without the action)
 
 If you prefer full control, set up each step manually. Puppeteer 24+ no longer auto-downloads Chrome, so you need to install it explicitly:

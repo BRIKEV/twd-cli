@@ -1,0 +1,207 @@
+name: 'TWD CLI Record'
+description: 'Record TWD browser tests to video in CI and upload the clips as an artifact'
+branding:
+  icon: 'video'
+  color: 'green'
+
+inputs:
+  working-directory:
+    description: 'Directory where twd.config.json lives'
+    required: false
+    default: '.'
+  changed-since:
+    description: >-
+      Record only the tests this branch added or changed since this ref, e.g.
+      github.event.pull_request.base.sha. Needs history, so set fetch-depth: 0
+      on actions/checkout. Mutually exclusive with `tests`.
+    required: false
+    default: ''
+  tests:
+    description: >-
+      Newline-separated test titles. Each becomes one --test filter, and filters
+      are OR'd. Mutually exclusive with `changed-since`.
+    required: false
+    default: ''
+  pace:
+    description: >-
+      Milliseconds held after each command, passed to --record-pace. Leave empty
+      for the CLI default (300). 0 disables pacing.
+    required: false
+    default: ''
+  install-ffmpeg:
+    description: >-
+      Install a known-good ffmpeg 8.x. Set false to use whatever is on PATH.
+    required: false
+    default: 'true'
+  upload-artifact:
+    description: 'Upload the clips as a workflow artifact'
+    required: false
+    default: 'true'
+  artifact-name:
+    description: 'Name of the uploaded artifact'
+    required: false
+    default: 'twd-recording'
+  retention-days:
+    description: 'How long to keep the artifact'
+    required: false
+    default: '14'
+
+outputs:
+  clip-count:
+    description: >-
+      How many clips were produced. 0 is a valid, non-failing result: a branch
+      that changed no tests has nothing to record.
+    value: ${{ steps.clips.outputs.count }}
+  dir:
+    description: 'Directory the clips were written to, for a caller doing its own upload'
+    value: ${{ steps.resolve.outputs.dir }}
+  artifact-url:
+    description: 'URL of the uploaded artifact, when this action uploaded it'
+    value: ${{ steps.upload.outputs.artifact-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        TESTS: ${{ inputs.tests }}
+        CHANGED_SINCE: ${{ inputs.changed-since }}
+      run: |
+        if [ -n "$TESTS" ] && [ -n "$CHANGED_SINCE" ]; then
+          echo "::error::Set either 'tests' or 'changed-since', not both. They are two ways to choose the same thing, and combining them silently records more than you asked for."
+          exit 1
+        fi
+
+    - name: Install ffmpeg
+      if: inputs.install-ffmpeg == 'true'
+      shell: bash
+      env:
+        # Pinned to the 8.1 branch, not to a distro package and not to "the
+        # obvious static build". Puppeteer's screencast passes
+        # -movflags hybrid_fragmented, which arrived after ffmpeg 7: measured,
+        # 6.1.1 (ubuntu-24.04) no, 7.0.2 (johnvansickle release) no, 8.1.2 yes.
+        # apt-get install ffmpeg on a GitHub runner gets you 6.1.1 and a run
+        # that fails at the first frame.
+        #
+        # The gpl variant is deliberate: it carries libx264, which twd-cli uses
+        # to convert the finished mp4 into something that plays outside Chrome.
+        # One download covers both requirements.
+        #
+        # The URL is stable and the build behind it moves within 8.1.x, so there
+        # is no checksum to pin. That is acceptable here because twd-cli probes
+        # the binary's actual capability before it launches a browser, so an
+        # unusable build fails fast with an actionable message rather than
+        # silently producing a broken clip.
+        FFMPEG_URL: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz'
+      run: |
+        set -euo pipefail
+
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::warning::install-ffmpeg only provides a build for Linux runners, and this is $RUNNER_OS. Install ffmpeg 8 or newer yourself, or set install-ffmpeg: false to silence this. twd-cli will tell you if what is on PATH cannot record."
+          exit 0
+        fi
+
+        DEST="$RUNNER_TEMP/twd-ffmpeg"
+        mkdir -p "$DEST"
+        curl -fsSL --retry 3 --retry-delay 2 "$FFMPEG_URL" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+        tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$DEST" --strip-components=1
+        echo "$DEST/bin" >> "$GITHUB_PATH"
+        "$DEST/bin/ffmpeg" -version | head -n 1
+
+    - name: Cache Puppeteer browsers
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/puppeteer
+        key: ${{ runner.os }}-puppeteer-${{ hashFiles(format('{0}/package-lock.json', inputs.working-directory)) }}
+        restore-keys: |
+          ${{ runner.os }}-puppeteer-
+
+    - name: Install Chrome for Puppeteer
+      shell: bash
+      run: npx puppeteer browsers install chrome
+
+    - name: Resolve the recording directory
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Same shape as the contract report lookup in the `run` action: the
+        # config is the source of truth, and the action only needs to know where
+        # to look afterwards.
+        DIR=$(node -e "
+          const fs = require('fs');
+          let dir = './twd-artifacts';
+          try {
+            const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
+            if (config.record && config.record.dir) dir = config.record.dir;
+          } catch {}
+          console.log(dir);
+        ")
+        echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+        echo "Clips will be written to $DIR"
+
+    - name: Record TWD tests
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CHANGED_SINCE: ${{ inputs.changed-since }}
+        TESTS: ${{ inputs.tests }}
+        PACE: ${{ inputs.pace }}
+      run: |
+        set -euo pipefail
+
+        # Built as an array so a title containing spaces or quotes reaches the
+        # CLI as one argument. Every value arrives through the environment
+        # rather than expression interpolation, so nothing in an input can be
+        # read as shell.
+        args=(run --record)
+
+        if [ -n "$CHANGED_SINCE" ]; then
+          args+=(--changed-since "$CHANGED_SINCE")
+        fi
+
+        if [ -n "$TESTS" ]; then
+          while IFS= read -r title; do
+            title="${title%$'\r'}"
+            [ -n "$title" ] || continue
+            args+=(--test "$title")
+          done <<< "$TESTS"
+        fi
+
+        if [ -n "$PACE" ]; then
+          args+=(--record-pace "$PACE")
+        fi
+
+        npx twd-cli "${args[@]}"
+
+    - name: Count the clips
+      id: clips
+      # always(): a failed run can still have written a partial clip, and that
+      # clip is evidence. The step above has already failed the action, so
+      # counting and uploading here cannot turn a red run green.
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        COUNT=0
+        if [ -n "$DIR" ] && [ -d "$DIR" ]; then
+          COUNT=$(find "$DIR" -maxdepth 1 -type f \( -name '*.mp4' -o -name '*.webm' -o -name '*.gif' \) | wc -l | tr -d ' ')
+        fi
+        echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+        echo "Recorded $COUNT clip(s)."
+
+    - name: Upload the recording
+      id: upload
+      # Skipped at zero clips on purpose. "This branch changed no tests" is a
+      # normal outcome that must not fail the action, and upload-artifact with
+      # if-no-files-found: error would fail it.
+      if: always() && inputs.upload-artifact == 'true' && steps.clips.outputs.count != '' && steps.clips.outputs.count != '0'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.working-directory }}/${{ steps.resolve.outputs.dir }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error

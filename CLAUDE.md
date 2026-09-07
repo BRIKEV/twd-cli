@@ -68,6 +68,38 @@ These are load-bearing and easy to undo by accident:
 - **The required movflags are puppeteer's, not ours.** `REQUIRED_MOVFLAGS` mirrors `ScreenRecorder#getFormatArgs` in puppeteer-core, so re-read that method on a puppeteer bump. This is why the preflight probes `-h muxer=mp4` rather than pinning a version floor — a floor written from one measurement ("7 or newer") was already wrong on the second.
 - **The screencast's own output does not play outside Chrome.** Puppeteer feeds ffmpeg PNG frames with no `-pix_fmt`, so RGB rides into VP9 and the file lands as vp9/`gbrp` in an mp4 container. QuickTime and Preview open neither. `transcodeForPlayback()` re-encodes to h264/`yuv420p` in place after the run; measured on a real capture it also cut 202805 bytes to 49222. Failure there is a warning, never fatal — the untranscoded file is still a correct recording.
 
+## Composite actions
+
+`.github/actions/run` and `.github/actions/record` are siblings and should stay
+shaped alike. Both assume the app is **already served** at the url in
+`twd.config.json` — starting a dev server belongs to the caller's workflow, not
+to the action.
+
+Conventions that are load-bearing in both:
+
+- **Workflow policy stays with the caller.** The trigger, the PR comment, the
+  label, `timeout-minutes` and `continue-on-error` are per-repo decisions. An
+  action that comments on a PR also needs `pull-requests: write`, which a caller
+  should grant deliberately rather than inherit.
+- **Every `${{ }}` reaches a script through `env:`**, never interpolated into a
+  `run` body, and multi-value inputs are built into a bash **array** so a title
+  containing spaces or quotes stays one argument.
+- **Third-party actions are pinned by commit SHA** with a `# v4`-style comment.
+- **`if: always()` on the upload steps**, so a failed run still surfaces its
+  partial evidence without turning the job green.
+
+`record` installs ffmpeg **8.x** from BtbN's `n8.1` build rather than apt:
+ubuntu-24.04 ships 6.1.1, which rejects the `-movflags hybrid_fragmented`
+puppeteer passes. The `gpl` variant also carries `libx264` for the H.264
+conversion, so one download covers both. There is deliberately **no capability
+check in the action** — that lives in the CLI preflight, so every user gets it
+and not only Actions users. The bundled build is Linux-only; other runners get a
+warning and skip.
+
+`clip-count: 0` is a success, not a failure: a branch that changed no tests has
+nothing to record. That is why the upload step is skipped at zero rather than
+running with `if-no-files-found: error`.
+
 **`test-example-app/`** — A React demo app with TWD tests integrated, used for manual testing/demonstration. Not part of the published package or test suite.
 
 ## Testing
