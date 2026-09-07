@@ -8,6 +8,7 @@ import { generateContractMarkdown } from './contractMarkdown.js';
 import { buildTestPath } from './buildTestPath.js';
 import { formatRunComplete } from './testSummary.js';
 import { selectTestIds } from './filterTests.js';
+import { resolveChangedTitles } from './changedTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
@@ -53,6 +54,7 @@ function recordedFileSize(absPath) {
 export async function runTests(options = {}) {
   const {
     testFilters = [],
+    changedSince = null,
     recordOverrides = {},
     shard = null,
     reportDir = null,
@@ -105,6 +107,24 @@ export async function runTests(options = {}) {
   try {
     config = loadConfig();
     const workingDir = process.cwd();
+
+    // Resolved before anything else, including the ffmpeg probe: a branch that
+    // changed no tests then needs neither a browser, nor a dev server, nor
+    // ffmpeg. That is the step this deletes from every caller's workflow, which
+    // otherwise counts the titles itself and skips the job.
+    let changedTitles = null;
+    if (changedSince) {
+      changedTitles = resolveChangedTitles(changedSince, workingDir).titles;
+      if (changedTitles.length === 0) {
+        // A query with an empty result is not a failure, unlike a --test filter
+        // that matched nothing.
+        console.log(`No tests changed since ${changedSince} — nothing to run.`);
+        return false;
+      }
+      console.log(
+        `Changed since ${changedSince}: ${changedTitles.length} test title(s) to match.`
+      );
+    }
     // config.record can be a shared default object; copy instead of mutating it.
     const record = { ...(config.record || {}), ...recordOverrides };
     const recording = Boolean(record.enabled);
@@ -192,12 +212,23 @@ export async function runTests(options = {}) {
     });
     partialHandlers = registeredHandlers;
 
-    // Resolve --test filters to a concrete set of test ids (null = run all)
+    // Resolve filters to a concrete set of test ids (null = run all). Typed
+    // --test filters and computed --changed-since titles are one set: filters
+    // already OR together, so there is no precedence rule to remember and
+    // --test stays usable to add one extra test to a branch's own.
+    const activeFilters = changedTitles ? [...testFilters, ...changedTitles] : testFilters;
     let selectedIds = null;
-    if (testFilters.length > 0) {
-      const { ids, unmatchedFilters } = selectTestIds(registeredHandlers, testFilters);
+    if (activeFilters.length > 0) {
+      const { ids, unmatchedFilters } = selectTestIds(registeredHandlers, activeFilters);
 
       if (ids.length === 0) {
+        if (changedTitles) {
+          console.log(
+            `No registered test matched the ${changedTitles.length} title(s) changed since ${changedSince}.`
+          );
+          await browser.close();
+          return false;
+        }
         console.error(
           `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`
         );
@@ -205,9 +236,13 @@ export async function runTests(options = {}) {
         return true;
       }
 
-      if (unmatchedFilters.length > 0) {
+      // Only filters the user actually typed. A computed title that matches no
+      // registered test is normal — the file it lives in may not be loaded —
+      // and warning about it would be unactionable noise on every run.
+      const unmatchedTyped = unmatchedFilters.filter((f) => testFilters.includes(f));
+      if (unmatchedTyped.length > 0) {
         console.warn(
-          `Warning: these filter(s) matched no tests (others did): ${unmatchedFilters.map((f) => `"${f}"`).join(', ')}`
+          `Warning: these filter(s) matched no tests (others did): ${unmatchedTyped.map((f) => `"${f}"`).join(', ')}`
         );
       }
 

@@ -58,6 +58,49 @@ Notes:
 - Code coverage collection is skipped while a `--test` filter is active, since a
   filtered run is a partial (debug) run.
 
+### Running only what this branch changed
+
+`--changed-since <ref>` works out which tests the current branch added or
+changed and runs only those. It replaces the "diff, grep for `it()` titles,
+build a `--test` loop" script that every consumer was writing:
+
+```bash
+npx twd-cli run --changed-since origin/main
+
+# Most useful with --record: a reviewer watches what the PR built,
+# not the whole suite.
+npx twd-cli run --record --changed-since origin/main
+```
+
+How the set is worked out:
+
+1. `git merge-base <ref> HEAD` for the base, falling back to `<ref>` itself —
+   a branch is not always a descendant of wherever the base has moved to.
+2. `it()` titles on lines the branch **added**, in `*.twd.test.*` files only.
+   The tests that already lived in the same file are noise, and pacing makes
+   them expensive to record.
+3. If the diff added no `it()` at all, every title in the changed files —
+   a body can change without its title line moving, and recording nothing
+   would be worse than recording a little too much.
+
+`it()` and `it.only()` are selected; `it.skip()`, `it.todo()` and `xit()` never
+are, since a test that does not run cannot be recorded. Uncommitted and
+untracked test files count too, so the test you just wrote is picked up without
+committing first.
+
+Notes:
+
+- **A branch that changed no tests prints one line and exits `0`.** An empty
+  result is a normal CI outcome, not a failure — unlike `--test`, which is an
+  assertion you typed and still exits `1` when it matches nothing. This is
+  decided before the browser launches, so such a run needs no dev server at all.
+- **It unions with `--test`** rather than overriding it, so you can add one
+  extra test to a branch's own.
+- **The base branch has to be in the clone.** `actions/checkout` defaults to
+  `fetch-depth: 1`, which fetches no history; set `fetch-depth: 0`. The error
+  says so if you forget.
+- It is a filter, not a recording feature — `--record` is optional.
+
 ### Configuration
 
 Create a `twd.config.json` file in your project root:

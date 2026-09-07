@@ -4,7 +4,12 @@ import { parseShardSpec } from './shard.js';
 // reports how many tokens it consumed. Shared by both parsers.
 function readValue(argv, token, prefix, index) {
   if (token === prefix) {
-    return { value: argv[index + 1], consumed: argv[index + 1] !== undefined ? 2 : 1 };
+    const next = argv[index + 1];
+    // A value never starts with `--`. Taking one would consume the flag that
+    // follows as well as producing a value nothing can resolve. The `=` form
+    // stays available for the pathological case.
+    if (next === undefined || next.startsWith('--')) return { value: undefined, consumed: 1 };
+    return { value: next, consumed: 2 };
   }
   return { value: token.slice(prefix.length + 1), consumed: 1 };
 }
@@ -14,6 +19,7 @@ export function parseRunArgs(argv) {
   const record = {};
   let shard = null;
   let reportDir = null;
+  let changedSince = null;
   // Two separate flags on purpose, the way Jest separates them. They close two
   // different holes: --update-snapshots rewrites references that already exist,
   // --ci forbids creating one that does not. The precedence between them is
@@ -33,6 +39,10 @@ export function parseRunArgs(argv) {
       // Throws on a malformed spec. A silently-ignored --shard would run zero
       // tests and exit 0.
       shard = parseShardSpec(value);
+      i += consumed - 1;
+    } else if (token === '--changed-since' || token.startsWith('--changed-since=')) {
+      const { value, consumed } = readValue(argv, token, '--changed-since', i);
+      if (value !== undefined) changedSince = value;
       i += consumed - 1;
     } else if (token === '--report-dir' || token.startsWith('--report-dir=')) {
       const { value, consumed } = readValue(argv, token, '--report-dir', i);
@@ -65,7 +75,7 @@ export function parseRunArgs(argv) {
     }
   }
 
-  return { testFilters, record, shard, reportDir, updateSnapshots, ci };
+  return { testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci };
 }
 
 // `twd-cli merge <dir> [--out <path>]`. The directory is the first positional
