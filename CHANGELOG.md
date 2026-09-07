@@ -1,3 +1,33 @@
+## <small>1.7.0 (2026-09-07)</small>
+
+* feat(run): `--changed-since <ref>` runs only the tests the current branch added or changed, worked out from git. It replaces the diff-and-grep script every consumer was hand-rolling — 82 lines in `twd-vue-example`, plus a step to count the results and skip when empty, plus a bash loop building `--test` arguments (#25)
+* feat(run): titles come from **added lines only**, in `*.twd.test.*` files, falling back to every title in a changed file when the diff moved no `it()` line at all. `it()` and `it.only()` are selected, `it.skip()` and `xit()` never are — a test that does not run cannot be recorded. Uncommitted and untracked test files count too
+* feat(run): a branch that changed no tests prints one line and **exits 0**. An empty result is a normal CI outcome, not a failure, unlike `--test`, which is an assertion you typed and still exits 1 when it matches nothing. This is decided before the browser launches, so such a run needs no dev server at all
+* fix(record): a dead ffmpeg no longer hangs the run. Puppeteer's `stop()` waits on a `close` event that has already fired when ffmpeg exited early, so the await never returned — it cost an entire CI job on a suite whose tests had all passed. The encoder's death is now detected from the recorder stream, the frame pipeline is aborted (which is what ends the endless `ffmpeg failed to write` output), and the stop is bounded (#24)
+* fix(record): ffmpeg's own stderr is finally surfaced. Puppeteer routes it to a debug channel and nowhere else, so the only previous way to learn why an encode failed was to point `record.ffmpegPath` at a wrapper script that tees it (#24)
+* fix(record): the pre-flight now checks what recording actually needs rather than that ffmpeg merely exists. `ffmpeg -h muxer=mp4` must list every movflag Puppeteer will pass. A version floor would be a moving target — the flags are Puppeteer's — and one written from a single measurement was already wrong on the second (#24)
+* fix(record): mp4 output is converted to H.264 / `yuv420p` after the run, so it opens in QuickTime, Preview and every browser. The screencast produces VP9 with `pix_fmt=gbrp`, which is valid, decodable, and openable in neither — a successful recording that looks like a failure. Measured on a real capture it is also about a quarter of the size (#24)
+* fix(record): `--record-pace 0` works. The parser guarded on `> 0`, so `0` was dropped and the run silently stayed at the 300ms default, while the same value in `twd.config.json` worked. The documentation was right and the parser was the odd one out (#27)
+* fix(parse): a value starting with `--` is no longer consumed as a flag's value. `--test --record` used to take `--record` as the filter text and swallow the flag (#27)
+* feat(record): the default recording viewport is `1280x1600`, up from `1280x720` (#26)
+* feat(actions): a `record` composite action, sibling to `run`. It installs a known-good ffmpeg, records, and uploads the clips, so a consumer's whole recording workflow is one step. Workflow policy — the trigger, the PR comment, the dev server — stays with the caller, exactly as it does for `run` (#28)
+* note: **recording mp4 now requires ffmpeg 8 or newer, and says so before the browser launches.** Puppeteer passes `-movflags hybrid_fragmented`, which arrived after ffmpeg 7: measured, 6.1.1 (ubuntu-24.04) no, 7.0.2 (the obvious static build) no, 8.1.2 yes. This is not a new limitation — those versions never produced a video — but it now fails in one actionable line instead of hanging the job. `webm` and `gif` pass no movflags and are unaffected
+* note: **a failed recording now fails the run**, exit 1, even when every test passed. You asked for an artifact and did not get one; a silent pass sends the next person looking for a video that is not there. A 0-byte output stays a warning, since a suite that never repaints legitimately records nothing
+* note: **behaviour change on recorded output.** Clips are taller and are now H.264 rather than VP9. The viewport decides what the video contains — Puppeteer captures exactly it, with no scrolling and no letterboxing — and at 720 a real recording cut the page above the list the tests asserted on. `record.viewport` still wins when you set it
+
+Recording changed more in this release than anything else, and two of those
+changes can turn a run red that was previously green: an ffmpeg older than 8 is
+now rejected up front, and a recording that fails takes the run with it. Both
+replace a silent failure — a hung job, or a clip that documented nothing — so
+the fix is to install ffmpeg 8, not to look for a flag that restores the old
+behaviour. There isn't one.
+
+`--changed-since` is the part worth adopting even if you never record: it is a
+filter, and `--record` is optional.
+
+Nothing here needs a newer `twd-js`. The pacing hook still wants 1.9.0 or newer
+and the layout snapshot flags still want 1.10.0, both unchanged from 1.6.0.
+
 ## <small>1.6.0 (2026-09-06)</small>
 
 * feat(snapshots): `--update-snapshots` and `--ci` drive `twd.matchLayout` headlessly. `matchLayout` is off in the browser sidebar on purpose, because the sidebar resizes the page and a developer's window is an arbitrary size, so twd-cli is where a layout snapshot is actually decided
