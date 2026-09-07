@@ -16,9 +16,13 @@ import { buildRunReport } from './runReport.js';
 import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
 import { writeSnapshotReport, clearFailureCaptures } from './snapshotReport.js';
 import {
-  assertFfmpegAvailable,
+  assertFfmpegCapable,
+  createFfmpegLog,
   applyRecordingFraming,
   startRecording,
+  watchRecorder,
+  stopRecording,
+  transcodeForPlayback,
   holdOpeningFrame,
   holdFinalFrame,
 } from './recorder.js';
@@ -62,20 +66,39 @@ export async function runTests(options = {}) {
   let partialStatus = [];
   let partialHandlers = [];
   let recorder = null;
+  let recorderHealth = null;
+  let stopOutcome = null;
+  let ffmpegLog = null;
   let recordOutput = null;
   let recordOutputPath = null;
   let recordingInfo = null;
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
+  //
+  // Silent by design — the outcome is reported once, by the caller that knows
+  // whether the run is otherwise healthy, rather than twice from two paths.
   const stopRecorder = async () => {
     if (!recorder) return;
     const active = recorder;
+    const health = recorderHealth;
     recorder = null;
-    try {
-      await active.stop();
-    } catch (err) {
-      console.warn(`Warning: could not finalize recording: ${err.message}`);
+    recorderHealth = null;
+    stopOutcome = await stopRecording(active, health ?? {});
+  };
+
+  // The only place ffmpeg's own words ever surface. Puppeteer hands its stderr
+  // to the debug logger and to nothing else, so before this the sole way to
+  // answer "why did the encode fail" was to point record.ffmpegPath at a
+  // wrapper script that tees it.
+  const reportRecordingFailure = (reason) => {
+    console.error(`\nRecording failed: ${reason}.`);
+    const lines = ffmpegLog ? ffmpegLog.lines : [];
+    if (lines.length > 0) {
+      console.error('ffmpeg reported:');
+      for (const line of lines) console.error(`  ${line}`);
+    } else {
+      console.error('ffmpeg wrote nothing before exiting. Re-run with NODE_DEBUG=puppeteer:ffmpeg for its full output.');
     }
   };
 
@@ -87,7 +110,8 @@ export async function runTests(options = {}) {
     const recording = Boolean(record.enabled);
 
     if (recording) {
-      assertFfmpegAvailable(record.ffmpegPath);
+      assertFfmpegCapable(record.ffmpegPath, record.format);
+      ffmpegLog = createFfmpegLog();
     }
 
     // Load contract validators if configured
@@ -100,6 +124,9 @@ export async function runTests(options = {}) {
       headless: config.headless,
       args: config.puppeteerArgs,
       protocolTimeout: config.protocolTimeout,
+      // Only while recording, and it delegates every other channel, so a run
+      // that is not recording keeps puppeteer's own debug logger untouched.
+      ...(ffmpegLog ? { logger: ffmpegLog.logger } : {}),
     });
 
     const page = await browser.newPage();
@@ -228,6 +255,9 @@ export async function runTests(options = {}) {
       recordOutput = path.join(record.dir, filename);
       recordOutputPath = path.resolve(workingDir, recordOutput);
       recorder = await startRecording(page, record, recordOutputPath);
+      // Attached immediately: an encoder that rejects puppeteer's arguments dies
+      // within a second of the first frame, long before the run is over.
+      recorderHealth = watchRecorder(recorder);
 
       if (record.pace) {
         // twd-js spaces out its own command loop, so frames are captured at
@@ -321,10 +351,17 @@ export async function runTests(options = {}) {
     }
 
     await stopRecorder();
+    let recordingFailed = false;
     if (recording) {
-      // Report what is on disk, not that stop() resolved. This also covers a
-      // stop() that rejected, which stopRecorder swallows into a warning.
-      if (recordedFileSize(recordOutputPath) === 0) {
+      if (stopOutcome && !stopOutcome.ok) {
+        // A broken recording is a failed run even when every test passed: the
+        // artifact was the point of asking for one, and a silent pass would send
+        // the next person looking for a video that is not there.
+        recordingFailed = true;
+        reportRecordingFailure(stopOutcome.reason);
+        console.error(`The file at ${recordOutput} is incomplete.`);
+      } else if (recordedFileSize(recordOutputPath) === 0) {
+        // Report what is on disk, not that stop() resolved.
         console.warn(
           `Warning: recording produced an empty file at ${recordOutput}.`
         );
@@ -332,6 +369,19 @@ export async function runTests(options = {}) {
           'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
         );
       } else {
+        // Only mp4 needs this. webm carrying VP9 is exactly what a .webm is for,
+        // and a gif is already universally playable.
+        if (record.format === 'mp4') {
+          const converted = transcodeForPlayback(record.ffmpegPath, recordOutputPath);
+          if (!converted.ok) {
+            console.warn(`Warning: could not convert the recording to H.264: ${converted.reason}`);
+            console.warn(
+              'The file is VP9 in an mp4 container, which plays in Chrome or VLC but not in QuickTime or Preview.'
+            );
+          }
+        }
+        // Measured after the conversion, which replaces the file and shrinks it
+        // by roughly four times.
         recordingInfo = { file: recordOutput, bytes: recordedFileSize(recordOutputPath) };
         console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
       }
@@ -343,7 +393,7 @@ export async function runTests(options = {}) {
     const notRun = baseIds.length - executed;
 
     // Exit with appropriate code
-    let hasFailures = stoppedEarly || testStatus.some((test) => test.status === 'fail');
+    let hasFailures = recordingFailed || stoppedEarly || testStatus.some((test) => test.status === 'fail');
 
     // Enrich collected mocks with full test path names
     for (const [, mock] of collectedMocks) {
@@ -528,6 +578,12 @@ export async function runTests(options = {}) {
       error.reported = true;
     }
     await stopRecorder();
+    // Stated as a fact, not as the cause: a dead encoder can disrupt the run
+    // that follows it, and reporting only the downstream error would leave the
+    // first thing that broke unmentioned.
+    if (stopOutcome && !stopOutcome.ok) {
+      reportRecordingFailure(stopOutcome.reason);
+    }
     if (browser) await browser.close();
     throw error;
   }
