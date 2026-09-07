@@ -1504,6 +1504,24 @@ describe("runTests pacing", () => {
     expect(page.evaluate).not.toHaveBeenCalledWith(expect.any(Function), 0);
   });
 
+  it("lets a --record-pace 0 override beat a configured pace", async () => {
+    // The override path, which is where the flag was lost. Not a re-test of the
+    // parser: this pins the merge, where dropping a falsy override would put
+    // the 300ms default back and make the flag a silent no-op again.
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: paceConfig });
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ recordOverrides: { pace: 0 } });
+
+    // Enumeration and the chunk run, and no setPace call between them.
+    expect(page.evaluate).not.toHaveBeenCalledWith(expect.any(Function), 500);
+    expect(page.evaluate).not.toHaveBeenCalledWith(expect.any(Function), 0);
+  });
+
   it("does not set a pace when recording is disabled", async () => {
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     const page = createMockPage({

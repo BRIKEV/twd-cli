@@ -68,7 +68,11 @@ export function parseRunArgs(argv) {
     } else if (token === '--record-pace' || token.startsWith('--record-pace=')) {
       const { value, consumed } = readValue(argv, token, '--record-pace', i);
       const parsed = Number(value);
-      if (value !== undefined && Number.isFinite(parsed) && parsed > 0) {
+      // `>= 0`, unlike --record-speed above. 0 is a meaningful pace — it is the
+      // documented way to turn pacing off — where a speed of 0 is meaningless.
+      // Rejecting it here left the flag a silent no-op that fell back to the
+      // 300ms default, while the same value set in twd.config.json worked.
+      if (value !== undefined && Number.isFinite(parsed) && parsed >= 0) {
         record.pace = parsed;
       }
       i += consumed - 1;
