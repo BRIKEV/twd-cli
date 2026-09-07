@@ -109,7 +109,7 @@ Record a run to a video file, for a PR attachment, a docs clip, or a demo:
 npx twd-cli run --record --test "checkout flow"
 ```
 
-Requires **ffmpeg** on your `PATH`, or `record.ffmpegPath` set. See [Requirements](#requirements).
+Requires **ffmpeg 8 or newer** on your `PATH`, or `record.ffmpegPath` set. Older builds are checked and rejected before the browser launches, with the reason. See [Requirements](#requirements).
 
 Runs are **paced at 300ms by default**, so `--record` on its own produces something watchable rather than a one second blur. Pacing slows the run itself rather than stretching the video, so unlike `--record-speed` it costs no frame rate. It needs `twd-js` 1.9.0 or newer; on an older version the run still records, unpaced, with a warning.
 
@@ -119,6 +119,8 @@ npx twd-cli run --record --record-pace 0 --test "checkout flow"     # no pacing
 ```
 
 One video per run, containing every matched test back to back in declaration order. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. The file is named after its contents: a single recorded test gets a slug of its full path (`login-shows-error-on-bad-password.mp4`), anything else gets `run.<ext>`. Re-running overwrites it.
+
+mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
 **A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x720, versus the 800x600 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
 
@@ -131,7 +133,7 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
 | `dir` | string | `"./twd-artifacts"` | Where the video is written |
 | `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests |
-| `format` | string | `"mp4"` | `"mp4"`, `"webm"` or `"gif"`, all encoded natively |
+| `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
 | `viewport` | object | `1280x720` | Applied only when recording. `width` and `height` set the video dimensions |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Post-hoc playback speed. Costs frame rate, prefer `pace` |
@@ -450,6 +452,19 @@ coverage on a red run.
 
 - Node.js >= 20.19.x
 - A running development server with TWD tests
-- ffmpeg, only for `--record`. Install with `brew install ffmpeg` (macOS),
-  `sudo apt-get install ffmpeg` (Linux), or `winget install ffmpeg` (Windows).
-  Set `record.ffmpegPath` if it is not on your `PATH`.
+- ffmpeg **8 or newer**, only for `--record`. Install with `brew install ffmpeg`
+  (macOS), `sudo apt-get install ffmpeg` (Linux), or `winget install ffmpeg`
+  (Windows). Set `record.ffmpegPath` if it is not on your `PATH`.
+
+  The version matters, and "not the distro build" is not enough. Puppeteer's
+  screencast passes `-movflags hybrid_fragmented`, which arrived after ffmpeg 7:
+
+  | ffmpeg | works |
+  |---|---|
+  | 6.1.1 (Ubuntu 24.04) | no |
+  | 7.0.2 (johnvansickle static) | no |
+  | 8.1.2 | yes |
+
+  On Ubuntu CI runners, install a build of 8.x rather than the packaged one.
+  `twd-cli` probes the capability, not the version number, so a future ffmpeg
+  that drops the flag is caught too.

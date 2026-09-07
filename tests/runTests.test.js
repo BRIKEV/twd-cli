@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from 'node:events';
 import { runTests } from "../src/index.js";
 import { REPORT_SCHEMA_VERSION } from "../src/runReport.js";
 
@@ -14,14 +15,17 @@ vi.mock('../src/contracts.js', () => ({
 vi.mock('../src/contractReport.js', () => ({
   printContractReport: vi.fn(),
 }));
-// assertFfmpegAvailable is mocked so no test needs a real binary. The two hold
-// helpers are mocked so their call ordering is observable here; their real
-// behavior is covered in tests/recorder.test.js.
+// The two ffmpeg-spawning helpers are mocked so no test needs a real binary.
+// The two hold helpers are mocked so their call ordering is observable here;
+// their real behavior is covered in tests/recorder.test.js. watchRecorder and
+// stopRecording are deliberately NOT mocked: the hang they exist to prevent
+// only shows up in the wiring, so these tests run the real ones.
 vi.mock('../src/recorder.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    assertFfmpegAvailable: vi.fn(),
+    assertFfmpegCapable: vi.fn(),
+    transcodeForPlayback: vi.fn(() => ({ ok: true })),
     holdOpeningFrame: vi.fn(),
     holdFinalFrame: vi.fn(),
   };
@@ -32,7 +36,16 @@ import puppeteer from 'puppeteer';
 import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
-import { assertFfmpegAvailable, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
+import { assertFfmpegCapable, transcodeForPlayback, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
+
+// puppeteer's screencast returns a PassThrough fed by ffmpeg's stdout, and the
+// stream ending early is the only signal that the encoder died. A plain object
+// would make watchRecorder untestable here.
+function createMockRecorder(stop) {
+  const recorder = new EventEmitter();
+  recorder.stop = stop ?? vi.fn().mockResolvedValue(undefined);
+  return recorder;
+}
 
 function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
   return {
@@ -45,7 +58,7 @@ function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
     evaluateOnNewDocument: vi.fn(),
     setViewport: vi.fn(),
     addStyleTag: vi.fn(),
-    screencast: vi.fn().mockResolvedValue(recorder ?? { stop: vi.fn() }),
+    screencast: vi.fn().mockResolvedValue(recorder ?? createMockRecorder()),
   };
 }
 
@@ -739,7 +752,9 @@ describe("runTests recording", () => {
     // clearAllMocks keeps implementations, so drop anything a previous test
     // queued on these two: a leaked throwing probe or a leaked stat size would
     // silently change what every later test exercises.
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -849,14 +864,12 @@ describe("runTests recording", () => {
     // mock would keep this assertion green even if index.js dropped the await,
     // which in production is the un-awaited ffmpeg finalize that truncates the
     // file.
-    const recorder = {
-      stop: vi.fn(() => new Promise((resolve) => {
-        setTimeout(() => {
-          order.push('stop');
-          resolve();
-        }, 0);
-      })),
-    };
+    const recorder = createMockRecorder(vi.fn(() => new Promise((resolve) => {
+      setTimeout(() => {
+        order.push('stop');
+        resolve();
+      }, 0);
+    })));
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
     const page = createMockPage({
       handlers: [{ id: '1', name: 'test1', type: 'test' }],
@@ -873,7 +886,7 @@ describe("runTests recording", () => {
   });
 
   it("still stops the recorder when a chunk throws", async () => {
-    const recorder = { stop: vi.fn() };
+    const recorder = createMockRecorder();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
     const page = createMockPage({
       handlers: [{ id: '1', name: 'test1', type: 'test' }],
@@ -922,7 +935,7 @@ describe("runTests recording", () => {
     // The window between the success-path stopRecorder() and browser.close():
     // coverage collection is the natural thing to throw in it. Without the
     // idempotency guard the catch path would stop an already-stopped recorder.
-    const recorder = { stop: vi.fn().mockResolvedValue(undefined) };
+    const recorder = createMockRecorder();
     vi.mocked(loadConfig).mockReturnValue({
       ...defaultMockConfig,
       coverage: true,
@@ -1003,6 +1016,254 @@ describe("runTests recording", () => {
   });
 });
 
+describe("runTests when the encoder dies", () => {
+  const recordConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  let consoleSpy;
+  let errorSpy;
+  let warnSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
+    vi.mocked(fs.statSync).mockReset();
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Kills ffmpeg while the tests are still running, the way a rejected argument
+  // does: stderr first, then the stream ends and stop() can never resolve again.
+  function pageWithDyingEncoder({ stderr = 'Unable to parse option value "hybrid_fragmented"' } = {}) {
+    const recorder = createMockRecorder(vi.fn(() => new Promise(() => {})));
+    const page = createMockPage({ handlers: [{ id: '1', name: 'test1', type: 'test' }] });
+    page.evaluate = vi.fn()
+      .mockImplementationOnce(async () => [{ id: '1', name: 'test1', type: 'test' }])
+      .mockImplementationOnce(async () => {
+        const { logger } = vi.mocked(puppeteer.launch).mock.calls[0][0];
+        logger('puppeteer:ffmpeg')(stderr);
+        recorder.emit('end');
+        return [{ id: '1', status: 'pass' }];
+      });
+    page.screencast = vi.fn().mockResolvedValue(recorder);
+    return { page, recorder };
+  }
+
+  it("hands puppeteer a logger while recording, so ffmpeg's stderr is reachable", async () => {
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(puppeteer.launch).toHaveBeenCalledWith(
+      expect.objectContaining({ logger: expect.any(Function) })
+    );
+  });
+
+  it("returns without hanging when stop() can never resolve", async () => {
+    // The regression this whole change exists for. puppeteer's stop() waits on a
+    // 'close' event that already fired, so awaiting it never returns; the run
+    // that found this burned a CI job's remaining minutes here after every test
+    // had already passed. If runTests awaits it again, this test times out.
+    const { page } = pageWithDyingEncoder();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+  });
+
+  it("fails the run when the encoder died, even though every test passed", async () => {
+    const { page } = pageWithDyingEncoder();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await expect(runTests()).resolves.toBe(true);
+  });
+
+  it("prints ffmpeg's own error instead of leaving it to a wrapper script", async () => {
+    const { page } = pageWithDyingEncoder({ stderr: "Unknown encoder 'libvpx-vp9'" });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    const printed = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toMatch(/Unknown encoder 'libvpx-vp9'/);
+  });
+
+  it("does not claim a recording it did not finish", async () => {
+    const { page } = pageWithDyingEncoder();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded'))).toBe(false);
+  });
+
+  it("does not convert a recording whose encoder died", async () => {
+    const { page } = pageWithDyingEncoder();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(transcodeForPlayback).not.toHaveBeenCalled();
+  });
+
+  it("still surfaces ffmpeg's error when something else throws afterwards", async () => {
+    // A dead encoder can disrupt the run that follows it. Reporting only the
+    // downstream error would leave the actual first cause unmentioned.
+    const recorder = createMockRecorder(vi.fn(() => new Promise(() => {})));
+    const page = createMockPage({ handlers: [{ id: '1', name: 'test1', type: 'test' }] });
+    page.evaluate = vi.fn()
+      .mockImplementationOnce(async () => [{ id: '1', name: 'test1', type: 'test' }])
+      .mockImplementationOnce(async () => {
+        const { logger } = vi.mocked(puppeteer.launch).mock.calls[0][0];
+        logger('puppeteer:ffmpeg')('Error while filtering: Invalid argument');
+        recorder.emit('end');
+        throw new Error('Navigation timeout');
+      });
+    page.screencast = vi.fn().mockResolvedValue(recorder);
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await expect(runTests()).rejects.toThrow('Navigation timeout');
+
+    const printed = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toMatch(/Error while filtering: Invalid argument/);
+    expect(printed).toMatch(/Navigation timeout/);
+  });
+
+  it("still closes the browser after a dead encoder", async () => {
+    const { page } = pageWithDyingEncoder();
+    const browser = createMockBrowser(page);
+    puppeteer.launch.mockResolvedValue(browser);
+
+    await runTests();
+
+    expect(browser.close).toHaveBeenCalled();
+  });
+});
+
+describe("runTests recording playback conversion", () => {
+  const recordConfig = {
+    enabled: true,
+    dir: './twd-artifacts',
+    filename: null,
+    format: 'mp4',
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    fps: 30,
+    speed: 1,
+    hideSidebar: true,
+    ffmpegPath: 'ffmpeg',
+  };
+
+  let consoleSpy;
+  let warnSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
+    vi.mocked(fs.statSync).mockReset();
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function passingPage() {
+    return createMockPage({
+      handlers: [{ id: '1', name: 'test1', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+  }
+
+  it("converts the finished mp4 so it plays outside Chrome", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(passingPage()));
+
+    await runTests();
+
+    expect(transcodeForPlayback).toHaveBeenCalledWith(
+      'ffmpeg',
+      expect.stringContaining('test1.mp4')
+    );
+  });
+
+  it("reports the size after conversion, not the size before it", async () => {
+    // The conversion replaces the file and measurably shrinks it, so a size read
+    // before the swap would report bytes that are no longer on disk.
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync)
+      .mockReturnValueOnce({ size: 202805 })
+      .mockReturnValue({ size: 49222 });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(passingPage()));
+
+    await runTests({ shard: { index: 1, total: 1 } });
+
+    const written = vi.mocked(fs.writeFileSync).mock.calls.map((c) => String(c[1])).join('');
+    expect(written).toContain('49222');
+  });
+
+  it("keeps the recording and warns when conversion is not possible", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: false, reason: "Unknown encoder 'libx264'" });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(passingPage()));
+
+    await expect(runTests()).resolves.toBe(false);
+
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(warnings).toMatch(/libx264/);
+    expect(warnings).toMatch(/VLC/);
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded'))).toBe(true);
+  });
+
+  it("does not convert an empty recording", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 0 });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(passingPage()));
+
+    await runTests();
+
+    expect(transcodeForPlayback).not.toHaveBeenCalled();
+  });
+
+  it("leaves webm alone, where VP9 is the expected codec", async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: { ...recordConfig, format: 'webm' },
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(passingPage()));
+
+    await runTests();
+
+    expect(transcodeForPlayback).not.toHaveBeenCalled();
+  });
+});
+
 describe("runTests ffmpeg probe", () => {
   const recordConfig = {
     enabled: true,
@@ -1018,7 +1279,9 @@ describe("runTests ffmpeg probe", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -1037,7 +1300,7 @@ describe("runTests ffmpeg probe", () => {
 
     await runTests();
 
-    expect(assertFfmpegAvailable).toHaveBeenCalledWith('ffmpeg');
+    expect(assertFfmpegCapable).toHaveBeenCalledWith('ffmpeg', 'mp4');
   });
 
   it("passes a configured ffmpegPath to the probe", async () => {
@@ -1053,7 +1316,7 @@ describe("runTests ffmpeg probe", () => {
 
     await runTests();
 
-    expect(assertFfmpegAvailable).toHaveBeenCalledWith('/opt/homebrew/bin/ffmpeg');
+    expect(assertFfmpegCapable).toHaveBeenCalledWith('/opt/homebrew/bin/ffmpeg', 'mp4');
   });
 
   it("does not probe for ffmpeg when recording is disabled", async () => {
@@ -1066,14 +1329,14 @@ describe("runTests ffmpeg probe", () => {
 
     await runTests();
 
-    expect(assertFfmpegAvailable).not.toHaveBeenCalled();
+    expect(assertFfmpegCapable).not.toHaveBeenCalled();
   });
 
   it("fails before launching the browser when ffmpeg is missing", async () => {
     // The whole point of the pre-flight probe: no wasted launch + navigation
     // before the user learns ffmpeg is not installed.
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
-    vi.mocked(assertFfmpegAvailable).mockImplementation(() => {
+    vi.mocked(assertFfmpegCapable).mockImplementation(() => {
       throw new Error('Recording requires ffmpeg, which was not found.');
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1105,7 +1368,7 @@ describe("runTests pre-roll and post-roll", () => {
     // An earlier describe's restoreAllMocks puts these back to their real
     // implementations, so neuter them again or the probe actually shells out
     // and holdFinalFrame actually drives page.evaluate.
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
     vi.mocked(holdOpeningFrame).mockReset();
     vi.mocked(holdFinalFrame).mockReset();
     vi.mocked(fs.statSync).mockReset();
@@ -1137,12 +1400,10 @@ describe("runTests pre-roll and post-roll", () => {
   it("holds the final frame before the recorder is stopped", async () => {
     const order = [];
     vi.mocked(holdFinalFrame).mockImplementation(() => { order.push('hold'); });
-    const recorder = {
-      stop: vi.fn(() => new Promise((resolve) => setTimeout(() => {
-        order.push('stop');
-        resolve();
-      }, 0))),
-    };
+    const recorder = createMockRecorder(vi.fn(() => new Promise((resolve) => setTimeout(() => {
+      order.push('stop');
+      resolve();
+    }, 0))));
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: rollConfig });
     const page = passingPage(recorder);
     const browser = createMockBrowser(page);
@@ -1189,7 +1450,7 @@ describe("runTests pacing", () => {
     vi.clearAllMocks();
     // An earlier describe's restoreAllMocks puts these back to their real
     // implementations, so neuter them again.
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
     vi.mocked(holdOpeningFrame).mockReset();
     vi.mocked(holdFinalFrame).mockReset();
     vi.mocked(fs.statSync).mockReset();
@@ -1308,7 +1569,9 @@ describe('runTests sharding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -1462,7 +1725,9 @@ describe('runTests non-regression: non-sharded behavior is unchanged', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -1562,7 +1827,9 @@ describe('runTests sharded behavior changes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
-    vi.mocked(assertFfmpegAvailable).mockReset();
+    vi.mocked(assertFfmpegCapable).mockReset();
+    vi.mocked(transcodeForPlayback).mockReset();
+    vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
