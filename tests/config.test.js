@@ -197,6 +197,7 @@ describe('loadConfig', () => {
       enabled: false,
       dir: './twd-artifacts',
       filename: null,
+      maxClips: 20,
       format: 'mp4',
       viewport: { width: 1280, height: 1600, deviceScaleFactor: 1 },
       fps: 30,
@@ -284,6 +285,10 @@ describe('loadConfig', () => {
     expect(record.postRoll).toBe(500);
     expect(record.format).toBe('mp4');
     expect(record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
+  });
+
+  it('defaults maxClips to 20', () => {
+    expect(DEFAULT_RECORD.maxClips).toBe(20);
   });
 
 });
