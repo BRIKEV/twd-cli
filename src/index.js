@@ -74,6 +74,7 @@ export async function runTests(options = {}) {
   let recordOutput = null;
   let recordOutputPath = null;
   let recordingInfo = null;
+  let activeClip = null;
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
@@ -274,6 +275,65 @@ export async function runTests(options = {}) {
 
     const chunks = chunk(baseIds, config.chunkSize);
 
+    const startClip = async (testNames) => {
+      const filename = resolveRecordFilename({
+        testNames,
+        filename: record.filename,
+        format: record.format,
+      });
+      const output = path.join(record.dir, filename);
+      const absolute = path.resolve(workingDir, output);
+      recorder = await startRecording(page, record, absolute);
+      // Attached immediately: an encoder that rejects puppeteer's arguments dies
+      // within a second of the first frame, long before the run is over.
+      recorderHealth = watchRecorder(recorder);
+      await holdOpeningFrame(record.preRoll);
+      return { output, absolute };
+    };
+
+    // holdFinalFrame before stopping is what gets the last result into the video
+    // at all, not just a pause on the end.
+    const finishClip = async (clip, testCount) => {
+      await holdFinalFrame(page, record.postRoll);
+      await stopRecorder();
+
+      if (stopOutcome && !stopOutcome.ok) {
+        // A broken recording is a failed run even when every test passed: the
+        // artifact was the point of asking for one, and a silent pass would send
+        // the next person looking for a video that is not there.
+        reportRecordingFailure(stopOutcome.reason);
+        console.error(`The file at ${clip.output} is incomplete.`);
+        return { failed: true, info: null };
+      }
+
+      if (recordedFileSize(clip.absolute) === 0) {
+        // Report what is on disk, not that stop() resolved.
+        console.warn(`Warning: recording produced an empty file at ${clip.output}.`);
+        console.warn(
+          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
+        );
+        return { failed: false, info: null };
+      }
+
+      // Only mp4 needs this. webm carrying VP9 is exactly what a .webm is for,
+      // and a gif is already universally playable.
+      if (record.format === 'mp4') {
+        const converted = transcodeForPlayback(record.ffmpegPath, clip.absolute);
+        if (!converted.ok) {
+          console.warn(`Warning: could not convert the recording to H.264: ${converted.reason}`);
+          console.warn(
+            'The file is VP9 in an mp4 container, which plays in Chrome or VLC but not in QuickTime or Preview.'
+          );
+        }
+      }
+
+      // Measured after the conversion, which replaces the file and shrinks it
+      // by roughly four times.
+      const info = { file: clip.output, bytes: recordedFileSize(clip.absolute) };
+      console.log(`Recorded ${testCount} test(s) to ${clip.output}`);
+      return { failed: false, info };
+    };
+
     // Recording starts here, not earlier: the output path is fixed up front by
     // page.screencast(), and the filename depends on which tests survived the
     // filter. Starting after baseIds is resolved also means the "no tests
@@ -282,17 +342,9 @@ export async function runTests(options = {}) {
       const testNames = baseIds
         .map((id) => buildTestPath(id, registeredHandlers))
         .filter(Boolean);
-      const filename = resolveRecordFilename({
-        testNames,
-        filename: record.filename,
-        format: record.format,
-      });
-      recordOutput = path.join(record.dir, filename);
-      recordOutputPath = path.resolve(workingDir, recordOutput);
-      recorder = await startRecording(page, record, recordOutputPath);
-      // Attached immediately: an encoder that rejects puppeteer's arguments dies
-      // within a second of the first frame, long before the run is over.
-      recorderHealth = watchRecorder(recorder);
+      activeClip = await startClip(testNames);
+      recordOutput = activeClip.output;
+      recordOutputPath = activeClip.absolute;
 
       if (record.pace) {
         // twd-js spaces out its own command loop, so frames are captured at
@@ -314,8 +366,6 @@ export async function runTests(options = {}) {
           console.warn(`Warning: pace clamped to ${applied}ms (requested ${record.pace}ms).`);
         }
       }
-
-      await holdOpeningFrame(record.preRoll);
     }
 
     // Handlers for path-building/summary come from the enumeration so partial
@@ -379,47 +429,13 @@ export async function runTests(options = {}) {
       }
     }
 
-    // Must run before stopRecorder(): it is what gets the last test's result
-    // into the video at all, not just a pause on the end. See holdFinalFrame.
-    if (recording) {
-      await holdFinalFrame(page, record.postRoll);
-    }
-
-    await stopRecorder();
     let recordingFailed = false;
     if (recording) {
-      if (stopOutcome && !stopOutcome.ok) {
-        // A broken recording is a failed run even when every test passed: the
-        // artifact was the point of asking for one, and a silent pass would send
-        // the next person looking for a video that is not there.
-        recordingFailed = true;
-        reportRecordingFailure(stopOutcome.reason);
-        console.error(`The file at ${recordOutput} is incomplete.`);
-      } else if (recordedFileSize(recordOutputPath) === 0) {
-        // Report what is on disk, not that stop() resolved.
-        console.warn(
-          `Warning: recording produced an empty file at ${recordOutput}.`
-        );
-        console.warn(
-          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
-        );
-      } else {
-        // Only mp4 needs this. webm carrying VP9 is exactly what a .webm is for,
-        // and a gif is already universally playable.
-        if (record.format === 'mp4') {
-          const converted = transcodeForPlayback(record.ffmpegPath, recordOutputPath);
-          if (!converted.ok) {
-            console.warn(`Warning: could not convert the recording to H.264: ${converted.reason}`);
-            console.warn(
-              'The file is VP9 in an mp4 container, which plays in Chrome or VLC but not in QuickTime or Preview.'
-            );
-          }
-        }
-        // Measured after the conversion, which replaces the file and shrinks it
-        // by roughly four times.
-        recordingInfo = { file: recordOutput, bytes: recordedFileSize(recordOutputPath) };
-        console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
-      }
+      const result = await finishClip(activeClip, executed);
+      recordingFailed = result.failed;
+      recordingInfo = result.info;
+    } else {
+      await stopRecorder();
     }
 
     const testStatus = partialStatus;
