@@ -125,6 +125,8 @@ runs:
       id: resolve
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
         # Same shape as the contract report lookup in the `run` action: the
         # config is the source of truth, and the action only needs to know where
@@ -140,6 +142,18 @@ runs:
         ")
         echo "dir=$DIR" >> "$GITHUB_OUTPUT"
         echo "Clips will be written to $DIR"
+
+        # upload-artifact resolves its path from the workspace root, not from
+        # working-directory, so it needs the two joined. It also rejects any '.'
+        # or '..' segment, and both halves carry one by default ('.' and
+        # './twd-artifacts'), which concatenated to '././twd-artifacts' and failed
+        # every upload on default inputs. Normalising here keeps the join in one
+        # place instead of repeating it in the upload step.
+        UPLOAD_PATH=$(node -e "
+          const path = require('path');
+          console.log(path.normalize(path.join(process.argv[1], process.argv[2])));
+        " "$WORKING_DIRECTORY" "$DIR")
+        echo "upload-path=$UPLOAD_PATH" >> "$GITHUB_OUTPUT"
 
     - name: Record TWD tests
       shell: bash
@@ -202,6 +216,6 @@ runs:
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: ${{ inputs.artifact-name }}
-        path: ${{ inputs.working-directory }}/${{ steps.resolve.outputs.dir }}
+        path: ${{ steps.resolve.outputs.upload-path }}
         retention-days: ${{ inputs.retention-days }}
         if-no-files-found: error
