@@ -123,6 +123,26 @@ Publishing is driven by a GitHub Release, not by `npm publish` locally.
 `beta` dist-tag via `github.event.release.prerelease`, so `npm install twd-cli`
 keeps resolving to the stable version.
 
+**Publishing takes two steps, and a green workflow is only the first.** The job
+authenticates with npm **Trusted Publishing** — a GitHub OIDC token, no
+`NPM_TOKEN` — and runs `npm stage publish`, which uploads the tarball and defers
+proof-of-presence. The version is **not live** at that point. Finish it by
+approving the stage in npm's UI, or with `npm stage approve <stage-id>`
+(`npm stage list` to find it, `npm stage reject <stage-id>` to discard). That
+deferral is deliberate: the credential CI holds can stage a release but cannot
+complete one.
+
+Two consequences worth remembering:
+
+- `npm stage publish` needs **npm 11.15.0 or newer**, and `node:24` ships
+  11.13.0, so the workflow upgrades npm before publishing. Do not remove that
+  step.
+- The trust is registered against this repository **and the workflow filename**
+  (`publish.yml`). Renaming or moving that file revokes it, and it has to be
+  re-registered on npm. Because `release` events run the **default branch's**
+  copy of a workflow, an edit to `publish.yml` only takes effect once it is on
+  `main` — never on the release branch that needs it.
+
 ### Release title convention
 
 - **Stable: the title is exactly the tag.** `v1.4.0`, `v1.3.1`, `v1.3.0`. No
@@ -140,7 +160,10 @@ cannot be replayed. This has failed at least once (v1.5.0): the Release was
 created correctly, non-draft and non-prerelease, but no run appeared and nothing
 reached npm. Deleting and recreating the Release object did not re-fire it
 either. The fallback is to publish from a clean `main` checkout with
-`npm publish --access public`, which needs no CI.
+`npm publish --access public`, which needs no CI — but note that the trusted
+publisher grants CI the `npm stage publish` permission only, so a local publish
+authenticates as **you**, not as the trusted publisher, and needs your own
+credentials plus 2FA.
 
 ## Key Dependencies
 
