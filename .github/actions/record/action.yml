@@ -9,6 +9,10 @@ inputs:
     description: 'Directory where twd.config.json lives'
     required: false
     default: '.'
+  cli-version:
+    description: 'twd-cli version to run. Pinned by default so an unchanged action gives an unchanged recording.'
+    required: false
+    default: '1.7.0'
   changed-since:
     description: >-
       Record only the tests this branch added or changed since this ref, e.g.
@@ -162,6 +166,7 @@ runs:
         CHANGED_SINCE: ${{ inputs.changed-since }}
         TESTS: ${{ inputs.tests }}
         PACE: ${{ inputs.pace }}
+        CLI_VERSION: ${{ inputs.cli-version }}
       run: |
         set -euo pipefail
 
@@ -187,7 +192,10 @@ runs:
           args+=(--record-pace "$PACE")
         fi
 
-        npx twd-cli "${args[@]}"
+        # Pinning the action to a SHA only fixes when and how the CLI is invoked.
+        # What the recording looks like is decided by the CLI, so a bare
+        # `npx twd-cli` left the result floating on whatever npm published last.
+        npx "twd-cli@${CLI_VERSION}" "${args[@]}"
 
     - name: Count the clips
       id: clips
