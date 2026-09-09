@@ -161,6 +161,15 @@ npx twd-cli run --record --record-pace 500 --test "checkout flow"   # slower
 npx twd-cli run --record --record-pace 0 --test "checkout flow"     # no pacing
 ```
 
+When several tests match, each one is recorded to its own clip, named after its
+`suite > test` path. A reviewer watches the criterion they doubt instead of
+scrubbing a single file for it.
+
+One clip for the whole run is still what you get from a single matched test, from
+`record.filename` (one name cannot address several clips), and from more matched
+tests than `record.maxClips` (default 20, set 0 to disable). The run says which
+of those applied.
+
 One video per run, containing every matched test back to back in declaration order. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. The file is named after its contents: a single recorded test gets a slug of its full path (`login-shows-error-on-bad-password.mp4`), anything else gets `run.<ext>`. Re-running overwrites it.
 
 mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
