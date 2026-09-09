@@ -186,7 +186,8 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
 | `dir` | string | `"./twd-artifacts"` | Where the video is written |
-| `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests |
+| `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests. Setting it also records the whole run to one clip, since one name cannot address several |
+| `maxClips` | number | `20` | Most clips one run splits into. Past it the whole run goes to a single file. `0` disables the bound |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
 | `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even — the H.264 conversion needs it |
 | `fps` | number | `30` | Capture frame rate |
