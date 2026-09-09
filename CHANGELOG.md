@@ -1,3 +1,29 @@
+## <small>1.8.0 (2026-09-09)</small>
+
+* feat(record): several matched tests now produce **one clip per test**, each named after its own `suite > test` path, rather than a single `run.<ext>` holding every matched test back to back. A branch adds one journey test per acceptance criterion, so the artifact a reviewer wants is one clip per criterion: watch the one you doubt, skip the rest. Scrubbing a four-second splice of three tests to find the one you care about is the thing this replaces (#30)
+* feat(record): `record.maxClips` bounds the split, default `20`, `0` disables it. Past the bound the run goes to one file and says so in a line. This is a human bound rather than a cost one — restarting a screencast on an open page measures about 250ms, so thirty clips is about seven seconds of overhead, not thirty browser launches — and what it protects is the reviewer who will not open thirty files (#30)
+* feat(record): a single matched test, an explicit `record.filename`, and a run past `maxClips` all still produce one clip for the whole run. One name cannot address several clips, and one test already got a file named after itself (#30)
+* feat(actions): the `record` action takes a `cli-version` input, pinned by default. Pinning the action to a SHA only fixes when and how the CLI is invoked; what a recording actually looks like is decided by the CLI, and the step ran a bare `npx twd-cli`. The result floated on whatever npm published last, so an unchanged repo could produce a different video
+* fix(actions): the `record` action's artifact upload works on default inputs. It joined `working-directory` and the recording directory by hand, and both carry a dot segment by default, so it produced `././twd-artifacts` — a path `upload-artifact` refuses. Every upload failed on a configuration nobody had customised, and because the recording itself had already succeeded first, it read as a recording bug rather than a path bug
+* fix(report): `run.json` carries a `recordings` array listing every clip. `recording` keeps its single-clip shape for external consumers and is `null` whenever the run split, so without this a sharded recorded run reported that no recording had happened at all (#30)
+* fix(record): an encoder that dies now stops the recording instead of being retried per clip. Each stop is bounded at 30 seconds, so a systemic ffmpeg failure could otherwise cost `maxClips` times that. The remaining tests still run, unrecorded, and the run still fails (#30)
+* note: **recorded filenames change for multi-test runs.** A run matching several tests used to write `run.<ext>`; it now writes one file per test, named from its path. Anything that globs `run.mp4` or expects exactly one file needs updating, and the `clip-count` output of the `record` action now reports the real number rather than always 1. `record.filename` pins a single name if you need the old shape back
+
+The behaviour change is the filenames, and it is worth checking before you
+upgrade a workflow that consumes the artifact by name. Everything downstream of
+"there is a directory of clips" is unaffected: the action uploads the directory,
+not a file, and its `clip-count` was already counting files on disk.
+
+The two `actions` fixes matter to anyone who adopted the `record` action in
+1.7.0, and they are independent of the feature. The upload was broken for every
+caller who did not set `working-directory`, which is most of them, and the
+unpinned `npx twd-cli` meant the action's SHA pin did not deliver the property
+it was added for. Both are fixed here, and the action's `cli-version` now
+defaults to this release.
+
+Nothing here needs a newer `twd-js`. The pacing hook still wants 1.9.0 or newer
+and the layout snapshot flags still want 1.10.0, unchanged from 1.7.0.
+
 ## <small>1.7.0 (2026-09-07)</small>
 
 * feat(run): `--changed-since <ref>` runs only the tests the current branch added or changed, worked out from git. It replaces the diff-and-grep script every consumer was hand-rolling — 82 lines in `twd-vue-example`, plus a step to count the results and skip when empty, plus a bash loop building `--test` arguments (#25)
