@@ -12,6 +12,7 @@ import { resolveChangedTitles } from './changedTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
+import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
 import { buildRunReport } from './runReport.js';
 import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
@@ -71,8 +72,6 @@ export async function runTests(options = {}) {
   let recorderHealth = null;
   let stopOutcome = null;
   let ffmpegLog = null;
-  let recordOutput = null;
-  let recordOutputPath = null;
   let recordingInfo = null;
   let activeClip = null;
 
@@ -273,7 +272,16 @@ export async function runTests(options = {}) {
       );
     }
 
-    const chunks = chunk(baseIds, config.chunkSize);
+    const { perTest, reason: perTestReason } = resolvePerTestRecording({
+      recording,
+      testCount: baseIds.length,
+      filename: record.filename,
+      maxClips: record.maxClips,
+    });
+    if (perTestReason) console.log(perTestReason);
+
+    // A chunk is one runByIds call, so a clip per test needs one test per chunk.
+    const chunks = chunk(baseIds, perTest ? 1 : config.chunkSize);
 
     const startClip = async (testNames) => {
       const filename = resolveRecordFilename({
@@ -339,12 +347,12 @@ export async function runTests(options = {}) {
     // filter. Starting after baseIds is resolved also means the "no tests
     // matched" early return can never leave a recorder running.
     if (recording) {
-      const testNames = baseIds
-        .map((id) => buildTestPath(id, registeredHandlers))
-        .filter(Boolean);
-      activeClip = await startClip(testNames);
-      recordOutput = activeClip.output;
-      recordOutputPath = activeClip.absolute;
+      if (!perTest) {
+        const testNames = baseIds
+          .map((id) => buildTestPath(id, registeredHandlers))
+          .filter(Boolean);
+        activeClip = await startClip(testNames);
+      }
 
       if (record.pace) {
         // twd-js spaces out its own command loop, so frames are captured at
@@ -374,9 +382,17 @@ export async function runTests(options = {}) {
     partialStatus = [];
     let executed = 0;
     let stoppedEarly = false;
+    let recordingFailed = false;
+    const recordingInfos = [];
     const seenIds = new Set();
 
     for (const ids of chunks) {
+      let chunkClip = null;
+      if (perTest) {
+        const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
+        chunkClip = await startClip(testNames);
+      }
+
       const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
         const TestRunner = window.__testRunner;
         const testStatus = [];
@@ -420,22 +436,35 @@ export async function runTests(options = {}) {
       }
       executed += ids.length;
 
+      let bail = false;
       if (config.maxFailures > 0) {
         const failed = partialStatus.filter((t) => t.status === 'fail').length;
         if (failed >= config.maxFailures) {
           stoppedEarly = true;
-          break;
+          bail = true;
         }
       }
+
+      if (perTest && chunkClip) {
+        const result = await finishClip(chunkClip, ids.length);
+        if (result.failed) recordingFailed = true;
+        if (result.info) recordingInfos.push(result.info);
+      }
+
+      if (bail) break;
     }
 
-    let recordingFailed = false;
-    if (recording) {
+    if (recording && !perTest) {
       const result = await finishClip(activeClip, executed);
       recordingFailed = result.failed;
       recordingInfo = result.info;
+      if (result.info) recordingInfos.push(result.info);
     } else {
       await stopRecorder();
+    }
+
+    if (perTest && recordingInfos.length > 0) {
+      console.log(`Recorded ${recordingInfos.length} clip(s), one per test.`);
     }
 
     const testStatus = partialStatus;
@@ -597,7 +626,9 @@ export async function runTests(options = {}) {
         notRun,
         stoppedEarly,
         coverageFile: coverageData ? COVERAGE_FILE : null,
+        // recording keeps its single-clip shape for existing readers.
         recording: recordingInfo,
+        recordings: recordingInfos,
         contracts: contractsBlock,
       });
       const { reportPath } = writeRunReport(dir, report, coverageData);
