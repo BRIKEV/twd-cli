@@ -60,6 +60,7 @@ export function buildRunReport({
   stoppedEarly,
   coverageFile = null,
   recording = null,
+  recordings = [],
   contracts = null,
 }) {
   // Resolved here, in the shard that ran the tests, because this is the only
@@ -87,6 +88,7 @@ export function buildRunReport({
         stoppedEarly,
         coverageFile,
         recording,
+        recordings,
       },
     ],
     discovery: {

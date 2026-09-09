@@ -383,14 +383,21 @@ export async function runTests(options = {}) {
     let executed = 0;
     let stoppedEarly = false;
     let recordingFailed = false;
+    let recordingAbandoned = false;
     const recordingInfos = [];
     const seenIds = new Set();
 
     for (const ids of chunks) {
       let chunkClip = null;
-      if (perTest) {
+      if (perTest && !recordingFailed) {
         const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
         chunkClip = await startClip(testNames);
+      } else if (perTest && !recordingAbandoned) {
+        // Every further clip would stop against the same dead encoder, each one
+        // racing the 30s deadline, so maxClips stalls replace one. The tests keep
+        // running: a broken encoder must not swallow their results.
+        recordingAbandoned = true;
+        console.error('Recording stopped for the rest of the run. The remaining tests still run, unrecorded.');
       }
 
       const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {

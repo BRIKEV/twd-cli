@@ -741,6 +741,9 @@ describe("runTests recording", () => {
     enabled: true,
     dir: './twd-artifacts',
     filename: null,
+    // Real config always carries one, and `undefined > 0` is false, so leaving
+    // it out silently exempted every test here from the clip bound.
+    maxClips: 20,
     format: 'mp4',
     viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
     fps: 30,
@@ -1017,6 +1020,116 @@ describe("runTests recording", () => {
     const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
     expect(logs.some((l) => l.startsWith('Recorded 1 test(s) to'))).toBe(true);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  const threeHandlers = [
+    { id: 's', name: 'Login', type: 'suite', children: ['1', '2', '3'] },
+    { id: '1', name: 'shows an error', type: 'test', parent: 's' },
+    { id: '2', name: 'accepts a password', type: 'test', parent: 's' },
+    { id: '3', name: 'redirects home', type: 'test', parent: 's' },
+  ];
+
+  // Several matched tests and no explicit filename is what splitting needs, so
+  // this is the page every clip-per-test case starts from. Each chunk answers
+  // for its own ids, because in this mode a chunk is a single test.
+  function threeTestPage({ recorder, statusFor, onChunk } = {}) {
+    const page = createMockPage({ handlers: threeHandlers, recorder });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce(threeHandlers)
+      .mockImplementation(async (_fn, _retryCount, chunkIds) => {
+        onChunk?.(chunkIds);
+        return chunkIds.map((id) => (statusFor ? statusFor(id) : { id, status: 'pass' }));
+      });
+    return page;
+  }
+
+  it("starts one clip per test, each named after its own path", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    const page = threeTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    const paths = page.screencast.mock.calls.map(([options]) => String(options.path));
+    expect(paths).toEqual([
+      expect.stringContaining('login-shows-an-error.mp4'),
+      expect.stringContaining('login-accepts-a-password.mp4'),
+      expect.stringContaining('login-redirects-home.mp4'),
+    ]);
+    expect(new Set(paths).size).toBe(3);
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs).toContain('Recorded 3 clip(s), one per test.');
+  });
+
+  it("finalises the open clip when maxFailures bails out mid-suite", async () => {
+    // The bail breaks the chunk loop, so the clip the failing test was being
+    // recorded into is only ever closed if finishClip runs before the break.
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      maxFailures: 1,
+      record: recordConfig,
+    });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    const recorder = createMockRecorder();
+    const page = threeTestPage({
+      recorder,
+      statusFor: (id) => ({ id, status: 'fail', error: 'boom' }),
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).resolves.toBe(true);
+
+    expect(page.screencast).toHaveBeenCalledTimes(1);
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+    const logs = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.startsWith('Recorded 1 test(s) to'))).toBe(true);
+  });
+
+  it("puts every clip in the shard report, where a single recording cannot fit", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    const page = threeTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ shard: { index: 1, total: 1 } });
+
+    const call = vi.mocked(fs.writeFileSync).mock.calls
+      .find(([file]) => String(file).endsWith('run.json'));
+    const shard = JSON.parse(call[1]).shards[0];
+    expect(shard.recording).toBeNull();
+    expect(shard.recordings.map((r) => r.file)).toEqual([
+      expect.stringContaining('login-shows-an-error.mp4'),
+      expect.stringContaining('login-accepts-a-password.mp4'),
+      expect.stringContaining('login-redirects-home.mp4'),
+    ]);
+    expect(shard.recordings.every((r) => r.bytes === 17081)).toBe(true);
+  });
+
+  it("starts no further clips once the encoder has died, and says so once", async () => {
+    // Without the guard every remaining test opens a clip whose stop() races the
+    // 30s deadline, so a dead encoder costs maxClips × 30s instead of one stall.
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, record: recordConfig });
+    vi.mocked(fs.statSync).mockReturnValue({ size: 17081 });
+    const recorder = createMockRecorder(vi.fn(() => new Promise(() => {})));
+    const page = threeTestPage({
+      recorder,
+      onChunk: (ids) => { if (ids[0] === '1') recorder.emit('end'); },
+    });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).resolves.toBe(true);
+
+    expect(page.screencast).toHaveBeenCalledTimes(1);
+    // The tests keep running: a broken encoder must not swallow their results.
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['2']);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 2, ['3']);
+    const stopped = errorSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith('Recording stopped for the rest of the run.'));
+    expect(stopped).toHaveLength(1);
   });
 });
 
