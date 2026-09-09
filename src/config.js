@@ -5,6 +5,9 @@ export const DEFAULT_RECORD = {
   enabled: false,
   dir: './twd-artifacts',
   filename: null,
+  // A human bound, not a cost one: a clip costs ~250ms, but nobody opens 30 of
+  // them. 0 disables it.
+  maxClips: 20,
   format: 'mp4',
   // 1600 tall, not 720. The viewport decides what the video contains: puppeteer
   // captures exactly it, with no scrolling and no letterboxing, so anything

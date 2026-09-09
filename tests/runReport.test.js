@@ -181,4 +181,16 @@ describe('buildRunReport', () => {
     expect(shard.coverageFile).toBeNull();
     expect(shard.recording).toBeNull();
   });
+
+  it('defaults recordings to an empty list', () => {
+    expect(build().shards[0].recordings).toEqual([]);
+  });
+
+  it('carries every clip of a per-test recording onto the shard', () => {
+    const recordings = [
+      { file: 'twd-artifacts/login-works.mp4', bytes: 17081 },
+      { file: 'twd-artifacts/login-also-works.mp4', bytes: 20488 },
+    ];
+    expect(build({ recordings }).shards[0].recordings).toEqual(recordings);
+  });
 });

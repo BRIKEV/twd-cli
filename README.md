@@ -161,7 +161,16 @@ npx twd-cli run --record --record-pace 500 --test "checkout flow"   # slower
 npx twd-cli run --record --record-pace 0 --test "checkout flow"     # no pacing
 ```
 
-One video per run, containing every matched test back to back in declaration order. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. The file is named after its contents: a single recorded test gets a slug of its full path (`login-shows-error-on-bad-password.mp4`), anything else gets `run.<ext>`. Re-running overwrites it.
+When several tests match, each one is recorded to its own clip, named after its
+`suite > test` path. A reviewer watches the criterion they doubt instead of
+scrubbing a single file for it.
+
+One clip for the whole run is still what you get from a single matched test, from
+`record.filename` (one name cannot address several clips), and from more matched
+tests than `record.maxClips` (default 20, set 0 to disable). The run says which
+of those applied.
+
+`--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests; re-running overwrites existing clips.
 
 mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
@@ -177,7 +186,8 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
 | `dir` | string | `"./twd-artifacts"` | Where the video is written |
-| `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests |
+| `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests. Setting it also records the whole run to one clip, since one name cannot address several |
+| `maxClips` | number | `20` | Most clips one run splits into. Past it the whole run goes to a single file. `0` disables the bound |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
 | `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even — the H.264 conversion needs it |
 | `fps` | number | `30` | Capture frame rate |
@@ -369,7 +379,7 @@ branch touched, rather than the whole suite. See
 
 | Output | Description |
 |--------|-------------|
-| `clip-count` | How many clips were produced. **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
+| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
 | `dir` | Where the clips are, for a caller that wants to do its own upload |
 | `artifact-url` | URL of the artifact, when the action uploaded it |
 

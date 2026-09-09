@@ -52,9 +52,7 @@ inputs:
 
 outputs:
   clip-count:
-    description: >-
-      How many clips were produced. 0 is a valid, non-failing result: a branch
-      that changed no tests has nothing to record.
+    description: 'Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips).'
     value: ${{ steps.clips.outputs.count }}
   dir:
     description: 'Directory the clips were written to, for a caller doing its own upload'

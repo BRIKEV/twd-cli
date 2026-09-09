@@ -12,6 +12,7 @@ import { resolveChangedTitles } from './changedTests.js';
 import { explainError } from './diagnostics.js';
 import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
+import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
 import { buildRunReport } from './runReport.js';
 import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
@@ -71,9 +72,8 @@ export async function runTests(options = {}) {
   let recorderHealth = null;
   let stopOutcome = null;
   let ffmpegLog = null;
-  let recordOutput = null;
-  let recordOutputPath = null;
   let recordingInfo = null;
+  let activeClip = null;
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
@@ -272,27 +272,87 @@ export async function runTests(options = {}) {
       );
     }
 
-    const chunks = chunk(baseIds, config.chunkSize);
+    const { perTest, reason: perTestReason } = resolvePerTestRecording({
+      recording,
+      testCount: baseIds.length,
+      filename: record.filename,
+      maxClips: record.maxClips,
+    });
+    if (perTestReason) console.log(perTestReason);
+
+    // A chunk is one runByIds call, so a clip per test needs one test per chunk.
+    const chunks = chunk(baseIds, perTest ? 1 : config.chunkSize);
+
+    const startClip = async (testNames) => {
+      const filename = resolveRecordFilename({
+        testNames,
+        filename: record.filename,
+        format: record.format,
+      });
+      const output = path.join(record.dir, filename);
+      const absolute = path.resolve(workingDir, output);
+      recorder = await startRecording(page, record, absolute);
+      // Attached immediately: an encoder that rejects puppeteer's arguments dies
+      // within a second of the first frame, long before the run is over.
+      recorderHealth = watchRecorder(recorder);
+      await holdOpeningFrame(record.preRoll);
+      return { output, absolute };
+    };
+
+    // holdFinalFrame before stopping is what gets the last result into the video
+    // at all, not just a pause on the end.
+    const finishClip = async (clip, testCount) => {
+      await holdFinalFrame(page, record.postRoll);
+      await stopRecorder();
+
+      if (stopOutcome && !stopOutcome.ok) {
+        // A broken recording is a failed run even when every test passed: the
+        // artifact was the point of asking for one, and a silent pass would send
+        // the next person looking for a video that is not there.
+        reportRecordingFailure(stopOutcome.reason);
+        console.error(`The file at ${clip.output} is incomplete.`);
+        return { failed: true, info: null };
+      }
+
+      if (recordedFileSize(clip.absolute) === 0) {
+        // Report what is on disk, not that stop() resolved.
+        console.warn(`Warning: recording produced an empty file at ${clip.output}.`);
+        console.warn(
+          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
+        );
+        return { failed: false, info: null };
+      }
+
+      // Only mp4 needs this. webm carrying VP9 is exactly what a .webm is for,
+      // and a gif is already universally playable.
+      if (record.format === 'mp4') {
+        const converted = transcodeForPlayback(record.ffmpegPath, clip.absolute);
+        if (!converted.ok) {
+          console.warn(`Warning: could not convert the recording to H.264: ${converted.reason}`);
+          console.warn(
+            'The file is VP9 in an mp4 container, which plays in Chrome or VLC but not in QuickTime or Preview.'
+          );
+        }
+      }
+
+      // Measured after the conversion, which replaces the file and shrinks it
+      // by roughly four times.
+      const info = { file: clip.output, bytes: recordedFileSize(clip.absolute) };
+      console.log(`Recorded ${testCount} test(s) to ${clip.output}`);
+      return { failed: false, info };
+    };
 
     // Recording starts here, not earlier: the output path is fixed up front by
     // page.screencast(), and the filename depends on which tests survived the
     // filter. Starting after baseIds is resolved also means the "no tests
     // matched" early return can never leave a recorder running.
     if (recording) {
-      const testNames = baseIds
-        .map((id) => buildTestPath(id, registeredHandlers))
-        .filter(Boolean);
-      const filename = resolveRecordFilename({
-        testNames,
-        filename: record.filename,
-        format: record.format,
-      });
-      recordOutput = path.join(record.dir, filename);
-      recordOutputPath = path.resolve(workingDir, recordOutput);
-      recorder = await startRecording(page, record, recordOutputPath);
-      // Attached immediately: an encoder that rejects puppeteer's arguments dies
-      // within a second of the first frame, long before the run is over.
-      recorderHealth = watchRecorder(recorder);
+      if (!perTest) {
+        const testNames = baseIds
+          .map((id) => buildTestPath(id, registeredHandlers))
+          .filter(Boolean);
+        activeClip = await startClip(testNames);
+      }
 
       if (record.pace) {
         // twd-js spaces out its own command loop, so frames are captured at
@@ -314,8 +374,6 @@ export async function runTests(options = {}) {
           console.warn(`Warning: pace clamped to ${applied}ms (requested ${record.pace}ms).`);
         }
       }
-
-      await holdOpeningFrame(record.preRoll);
     }
 
     // Handlers for path-building/summary come from the enumeration so partial
@@ -324,9 +382,24 @@ export async function runTests(options = {}) {
     partialStatus = [];
     let executed = 0;
     let stoppedEarly = false;
+    let recordingFailed = false;
+    let recordingAbandoned = false;
+    const recordingInfos = [];
     const seenIds = new Set();
 
     for (const ids of chunks) {
+      let chunkClip = null;
+      if (perTest && !recordingFailed) {
+        const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
+        chunkClip = await startClip(testNames);
+      } else if (perTest && !recordingAbandoned) {
+        // Every further clip would stop against the same dead encoder, each one
+        // racing the 30s deadline, so maxClips stalls replace one. The tests keep
+        // running: a broken encoder must not swallow their results.
+        recordingAbandoned = true;
+        console.error('Recording stopped for the rest of the run. The remaining tests still run, unrecorded.');
+      }
+
       const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
         const TestRunner = window.__testRunner;
         const testStatus = [];
@@ -370,56 +443,35 @@ export async function runTests(options = {}) {
       }
       executed += ids.length;
 
+      let bail = false;
       if (config.maxFailures > 0) {
         const failed = partialStatus.filter((t) => t.status === 'fail').length;
         if (failed >= config.maxFailures) {
           stoppedEarly = true;
-          break;
+          bail = true;
         }
       }
-    }
 
-    // Must run before stopRecorder(): it is what gets the last test's result
-    // into the video at all, not just a pause on the end. See holdFinalFrame.
-    if (recording) {
-      await holdFinalFrame(page, record.postRoll);
-    }
-
-    await stopRecorder();
-    let recordingFailed = false;
-    if (recording) {
-      if (stopOutcome && !stopOutcome.ok) {
-        // A broken recording is a failed run even when every test passed: the
-        // artifact was the point of asking for one, and a silent pass would send
-        // the next person looking for a video that is not there.
-        recordingFailed = true;
-        reportRecordingFailure(stopOutcome.reason);
-        console.error(`The file at ${recordOutput} is incomplete.`);
-      } else if (recordedFileSize(recordOutputPath) === 0) {
-        // Report what is on disk, not that stop() resolved.
-        console.warn(
-          `Warning: recording produced an empty file at ${recordOutput}.`
-        );
-        console.warn(
-          'Chrome only emits video frames when the page repaints, so a run with no visible changes (or no tests) records nothing.'
-        );
-      } else {
-        // Only mp4 needs this. webm carrying VP9 is exactly what a .webm is for,
-        // and a gif is already universally playable.
-        if (record.format === 'mp4') {
-          const converted = transcodeForPlayback(record.ffmpegPath, recordOutputPath);
-          if (!converted.ok) {
-            console.warn(`Warning: could not convert the recording to H.264: ${converted.reason}`);
-            console.warn(
-              'The file is VP9 in an mp4 container, which plays in Chrome or VLC but not in QuickTime or Preview.'
-            );
-          }
-        }
-        // Measured after the conversion, which replaces the file and shrinks it
-        // by roughly four times.
-        recordingInfo = { file: recordOutput, bytes: recordedFileSize(recordOutputPath) };
-        console.log(`Recorded ${executed} test(s) to ${recordOutput}`);
+      if (perTest && chunkClip) {
+        const result = await finishClip(chunkClip, ids.length);
+        if (result.failed) recordingFailed = true;
+        if (result.info) recordingInfos.push(result.info);
       }
+
+      if (bail) break;
+    }
+
+    if (recording && !perTest) {
+      const result = await finishClip(activeClip, executed);
+      recordingFailed = result.failed;
+      recordingInfo = result.info;
+      if (result.info) recordingInfos.push(result.info);
+    } else {
+      await stopRecorder();
+    }
+
+    if (perTest && recordingInfos.length > 0) {
+      console.log(`Recorded ${recordingInfos.length} clip(s), one per test.`);
     }
 
     const testStatus = partialStatus;
@@ -581,7 +633,9 @@ export async function runTests(options = {}) {
         notRun,
         stoppedEarly,
         coverageFile: coverageData ? COVERAGE_FILE : null,
+        // recording keeps its single-clip shape for existing readers.
         recording: recordingInfo,
+        recordings: recordingInfos,
         contracts: contractsBlock,
       });
       const { reportPath } = writeRunReport(dir, report, coverageData);
