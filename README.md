@@ -170,7 +170,7 @@ One clip for the whole run is still what you get from a single matched test, fro
 tests than `record.maxClips` (default 20, set 0 to disable). The run says which
 of those applied.
 
-One video per run, containing every matched test back to back in declaration order. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. The file is named after its contents: a single recorded test gets a slug of its full path (`login-shows-error-on-bad-password.mp4`), anything else gets `run.<ext>`. Re-running overwrites it.
+Each clip is named after its `suite > test` path slug. When a single clip covers the whole run (from a single test, explicit filename, or exceeding maxClips), it is named `run.<ext>`. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. Re-running overwrites existing clips.
 
 mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
@@ -378,7 +378,7 @@ branch touched, rather than the whole suite. See
 
 | Output | Description |
 |--------|-------------|
-| `clip-count` | How many clips were produced. **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
+| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
 | `dir` | Where the clips are, for a caller that wants to do its own upload |
 | `artifact-url` | URL of the artifact, when the action uploaded it |
 
