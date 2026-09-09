@@ -170,7 +170,7 @@ One clip for the whole run is still what you get from a single matched test, fro
 tests than `record.maxClips` (default 20, set 0 to disable). The run says which
 of those applied.
 
-Each clip is named after its `suite > test` path slug. When a single clip covers the whole run (from a single test, explicit filename, or exceeding maxClips), it is named `run.<ext>`. Note that `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests. Re-running overwrites existing clips.
+`--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests; re-running overwrites existing clips.
 
 mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
