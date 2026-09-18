@@ -1,3 +1,11 @@
+## <small>1.8.1 (2026-09-18)</small>
+
+* fix(changed-since): `--changed-since` finds the tests a branch added when the CLI runs below the repository root. `git diff --name-only` reports paths from the root while `git ls-files` reports them from cwd, and those paths are reused relative to cwd — as the pathspec of the diff that reads the added lines, and to read a file back. Below the root the pathspec doubled into `packages/web/packages/web/…`, matched nothing, and a branch that had just added tests reported none. `--relative` makes the two agree (#33)
+
+In practice this was a monorepo bug: both composite actions take a `working-directory`, and pointing `record` at one package of a workspace commented "Nothing to record" on the very pull request that added the tests. From the repository root `--relative` is a no-op, so single-package setups are unchanged.
+
+One behaviour note for callers below the root: the diff is now scoped to that directory, so a test changed in another package no longer counts.
+
 ## <small>1.8.0 (2026-09-09)</small>
 
 * feat(record): several matched tests now produce **one clip per test**, each named after its own `suite > test` path, rather than a single `run.<ext>` holding every matched test back to back. A branch adds one journey test per acceptance criterion, so the artifact a reviewer wants is one clip per criterion: watch the one you doubt, skip the rest. Scrubbing a four-second splice of three tests to find the one you care about is the thing this replaces (#30)
