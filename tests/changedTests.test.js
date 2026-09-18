@@ -5,6 +5,7 @@ vi.mock('fs');
 
 import { execFileSync } from 'node:child_process';
 import fs from 'fs';
+import path from 'path';
 import { extractTitles, resolveChangedTitles } from "../src/changedTests.js";
 
 describe("extractTitles", () => {
@@ -87,6 +88,9 @@ function mockGit({
   untracked = '',
   diff = '',
   gitMissing = false,
+  // What `git diff` prefixes paths with when not asked for `--relative`: real
+  // git reports from the repo root. `ls-files` always reports from cwd.
+  rootPrefix = '',
 } = {}) {
   vi.mocked(execFileSync).mockImplementation((bin, args) => {
     if (gitMissing) {
@@ -107,7 +111,10 @@ function mockGit({
       if (mergeBase === null) throw new Error('fatal: no merge base found');
       return `${mergeBase}\n`;
     }
-    if (call.startsWith('diff --name-only')) return changedFiles;
+    if (call.startsWith('diff --name-only')) {
+      if (call.includes('--relative') || !rootPrefix) return changedFiles;
+      return changedFiles.replace(/^(?!$)/gm, rootPrefix);
+    }
     if (call.startsWith('ls-files')) return untracked;
     if (call.startsWith('diff -U0')) return diff;
     return '';
@@ -162,7 +169,7 @@ describe("resolveChangedTitles", () => {
     resolveChangedTitles('origin/main');
 
     expect(gitCalls()).toContain('merge-base origin/main HEAD');
-    expect(gitCalls()).toContain('diff --name-only the-fork-point');
+    expect(gitCalls()).toContain('diff --name-only --relative the-fork-point');
   });
 
   it("falls back to the ref itself when there is no merge base", () => {
@@ -170,7 +177,7 @@ describe("resolveChangedTitles", () => {
 
     resolveChangedTitles('origin/main');
 
-    expect(gitCalls()).toContain('diff --name-only origin/main');
+    expect(gitCalls()).toContain('diff --name-only --relative origin/main');
   });
 
   it("compares against the working tree, so uncommitted work counts", () => {
@@ -180,8 +187,44 @@ describe("resolveChangedTitles", () => {
 
     // `diff <base>` with no second ref. Naming HEAD would ignore the test a
     // developer just wrote.
-    expect(gitCalls().some((c) => /^diff --name-only \S+$/.test(c))).toBe(true);
+    expect(gitCalls().some((c) => /^diff --name-only --relative \S+$/.test(c))).toBe(true);
     expect(gitCalls().every((c) => !c.includes('HEAD') || c.startsWith('merge-base'))).toBe(true);
+  });
+
+  it("finds the titles when cwd is one package of a monorepo", () => {
+    // What the composite actions do with `working-directory`. The root-relative
+    // paths used to double into `packages/web/packages/web/…` and match nothing.
+    mockGit({
+      rootPrefix: 'packages/web/',
+      changedFiles: 'src/twd-tests/todo.twd.test.ts\n',
+      diff: "+  it('adds a todo', () => {})",
+    });
+
+    const result = resolveChangedTitles('origin/main', '/repo/packages/web');
+
+    expect(result.titles).toEqual(['adds a todo']);
+    const diffCall = gitCalls().find((c) => c.startsWith('diff -U0'));
+    expect(diffCall).toContain('-- src/twd-tests/todo.twd.test.ts');
+    expect(diffCall).not.toContain('packages/web/packages/web');
+  });
+
+  it("reads the whole file from cwd when the diff added no it()", () => {
+    // The fallback resolves against cwd, which only lines up because the paths
+    // are relative to it.
+    mockGit({
+      rootPrefix: 'packages/web/',
+      changedFiles: 'src/twd-tests/todo.twd.test.ts\n',
+      diff: '',
+    });
+    vi.mocked(fs.readFileSync).mockReturnValue("it('already there', () => {})");
+
+    const result = resolveChangedTitles('origin/main', '/repo/packages/web');
+
+    expect(result.titles).toEqual(['already there']);
+    expect(fs.readFileSync).toHaveBeenCalledWith(
+      path.resolve('/repo/packages/web', 'src/twd-tests/todo.twd.test.ts'),
+      'utf8',
+    );
   });
 
   it("looks only at twd test files", () => {

@@ -117,7 +117,14 @@ export function resolveChangedTitles(ref, cwd = process.cwd()) {
 
   // `diff <base>` with no second ref, so the comparison runs to the working
   // tree. In CI the tree is clean and this is identical to `<base> HEAD`.
-  const tracked = lines(git(['diff', '--name-only', base], cwd)).filter((f) => TEST_FILE.test(f));
+  //
+  // `--relative` because these paths are reused relative to cwd: as the
+  // pathspec of the `diff -U0` below, and by `path.resolve(cwd, file)`. Plain
+  // `diff` reports from the repo root while `ls-files` reports from cwd, so in
+  // a monorepo package the pathspec doubled to `packages/web/packages/web/…`
+  // and matched nothing. A no-op from the root.
+  const tracked = lines(git(['diff', '--name-only', '--relative', base], cwd))
+    .filter((f) => TEST_FILE.test(f));
   // git diff never reports an untracked file, so without this a brand-new test
   // file reads as "this branch changed no tests".
   const untracked = lines(git(['ls-files', '--others', '--exclude-standard'], cwd))
