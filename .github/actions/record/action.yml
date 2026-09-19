@@ -10,9 +10,9 @@ inputs:
     required: false
     default: '.'
   cli-version:
-    description: 'twd-cli version to run. Pinned by default so an unchanged action gives an unchanged recording.'
+    description: 'twd-cli version to run. Pinned by default so an unchanged action gives an unchanged recording. Bumped with each release — see CLAUDE.md.'
     required: false
-    default: '1.8.0'
+    default: '1.8.1'
   changed-since:
     description: >-
       Record only the tests this branch added or changed since this ref, e.g.

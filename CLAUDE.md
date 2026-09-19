@@ -118,6 +118,12 @@ are written by hand, and tags stopped tracking it after v1.1.15.
 `package-lock.json` carries the version in **two** places, the top-level
 `version` and `packages[""].version`. Both have to move.
 
+So does the `cli-version` default in `.github/actions/record/action.yml`. Miss
+it and the action keeps invoking the previous CLI: 1.8.1 shipped the
+`--changed-since` fix while that default still read 1.8.0, so pinning the action
+to the new tag recorded nothing on the monorepo PR the fix was for. A published
+tag cannot be corrected afterwards — the bump only reaches the tag carrying it.
+
 Publishing is driven by a GitHub Release, not by `npm publish` locally.
 `publish.yml` triggers on `release: published` and routes prereleases to the
 `beta` dist-tag via `github.event.release.prerelease`, so `npm install twd-cli`
