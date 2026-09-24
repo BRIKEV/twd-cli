@@ -46,16 +46,10 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
   });
 
-  it("ignores unknown tokens", () => {
-    expect(parseRunArgs(['--verbose', '--test', 'Login'])).toEqual({
-      testFilters: ['Login'],
-      record: {},
-      changedSince: null,
-      shard: null,
-      reportDir: null,
-      updateSnapshots: false,
-      ci: false,
-    });
+  it("ignores positional tokens", () => {
+    // Only `--`-prefixed strays are rejected. A bare word is not a flag the
+    // caller believes they set, so it keeps its historical treatment.
+    expect(parseRunArgs(['extra', '--test', 'Login']).testFilters).toEqual(['Login']);
   });
 
   it("returns an empty record object when no record flags are present", () => {
@@ -237,6 +231,69 @@ describe('parseRunArgs --changed-since', () => {
 
     expect(result.changedSince).toBe('main');
     expect(result.testFilters).toEqual(['Login']);
+  });
+});
+
+describe('parseRunArgs unknown options', () => {
+  it('refuses an unknown --flag instead of dropping it', () => {
+    // The whole reason `run --help` ran the suite: a token no branch claimed
+    // was silently ignored, so a typo ran the entire suite with a filter the
+    // caller believed they had set.
+    expect(() => parseRunArgs(['--verbose', '--test', 'Login']))
+      .toThrow(/unknown option --verbose/);
+  });
+
+  it('suggests the closest known flag', () => {
+    expect(() => parseRunArgs(['--tests', 'foo'])).toThrow(/Did you mean --test\?/);
+    expect(() => parseRunArgs(['--changed_since', 'main'])).toThrow(/Did you mean --changed-since\?/);
+  });
+
+  it('points at run --help', () => {
+    expect(() => parseRunArgs(['--tests', 'foo'])).toThrow(/twd-cli run --help/);
+  });
+
+  it('names the flag without its =value', () => {
+    let message;
+    try { parseRunArgs(['--tests=foo']); } catch (e) { message = e.message; }
+    expect(message).toMatch(/unknown option --tests\b/);
+    expect(message).not.toMatch(/--tests=foo/);
+  });
+
+  it('lists every unknown flag, not only the first', () => {
+    let message;
+    try { parseRunArgs(['--foo', '--bar']); } catch (e) { message = e.message; }
+    expect(message).toMatch(/--foo/);
+    expect(message).toMatch(/--bar/);
+  });
+
+  it('offers no suggestion when nothing is close', () => {
+    let message;
+    try { parseRunArgs(['--frobnicate']); } catch (e) { message = e.message; }
+    expect(message).toMatch(/unknown option --frobnicate/);
+    expect(message).not.toMatch(/Did you mean/);
+  });
+
+  it('does not reject the value that follows an unknown flag', () => {
+    // `--tests foo`: only --tests is reported. `foo` is a positional and
+    // positionals are not the caller's mistake here.
+    let message;
+    try { parseRunArgs(['--tests', 'foo']); } catch (e) { message = e.message; }
+    expect(message).not.toMatch(/\bfoo\b/);
+  });
+});
+
+describe('parseMergeArgs unknown options', () => {
+  it('refuses an unknown --flag and points at merge --help', () => {
+    expect(() => parseMergeArgs(['.twd/shards', '--output', 'x']))
+      .toThrow(/unknown option --output/);
+    expect(() => parseMergeArgs(['.twd/shards', '--output', 'x']))
+      .toThrow(/Did you mean --out\?/);
+    expect(() => parseMergeArgs(['.twd/shards', '--output', 'x']))
+      .toThrow(/twd-cli merge --help/);
+  });
+
+  it('still takes the first positional as the directory', () => {
+    expect(parseMergeArgs(['.twd/shards', 'ignored']).dir).toBe('.twd/shards');
   });
 });
 

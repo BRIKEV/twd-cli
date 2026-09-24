@@ -3,15 +3,29 @@
 // runTests and runMerge are imported inside their branches, not here. A static
 // import of src/index.js pulls in puppeteer, so `twd-cli merge` — which never
 // opens a browser — would otherwise load the whole browser-automation graph
-// before it even looked at argv.
+// before it even looked at argv. The help paths below return for the same
+// reason: `run --help` used to run the entire suite.
 import { parseRunArgs, parseMergeArgs } from '../src/parseArgs.js';
+import { globalUsage, runUsage, mergeUsage } from '../src/usage.js';
 
-const command = process.argv[2];
+const [command, ...args] = process.argv.slice(2);
 
-if (command === 'run') {
+const USAGE = { run: runUsage, merge: mergeUsage };
+const isHelp = (token) => token === '--help' || token === '-h';
+
+// Help is decided here, before either parser runs and before any dynamic
+// import, so asking for it never reads a config, touches git or launches a
+// browser. Success text goes to stdout with exit 0; the process is left to
+// drain rather than exited, so a piped stdout cannot truncate it.
+if (command === undefined || command === 'help' || isHelp(command)) {
+  const topic = command === 'help' ? args[0] : undefined;
+  console.log((USAGE[topic] ?? globalUsage)());
+} else if (USAGE[command] && args.some(isHelp)) {
+  console.log(USAGE[command]());
+} else if (command === 'run') {
   try {
     const { testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci } =
-      parseRunArgs(process.argv.slice(3));
+      parseRunArgs(args);
     const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
       testFilters,
@@ -31,7 +45,7 @@ if (command === 'run') {
   }
 } else if (command === 'merge') {
   try {
-    const { dir, out } = parseMergeArgs(process.argv.slice(3));
+    const { dir, out } = parseMergeArgs(args);
     const { runMerge } = await import('../src/mergeCommand.js');
     const hasFailures = runMerge({ dir, out });
     process.exit(hasFailures ? 1 : 0);
@@ -42,54 +56,10 @@ if (command === 'run') {
     process.exit(1);
   }
 } else {
-  console.log(`
-twd-cli - Test runner for TWD tests
-
-Usage:
-  npx twd-cli run                  Run all tests
-  npx twd-cli run --test "<name>"  Run only tests whose "suite > test" path
-                                   contains <name> (case-insensitive).
-                                   Repeatable; multiple --test values are OR'd.
-  npx twd-cli run --changed-since <ref>
-                                   Run only the tests this branch added or
-                                   changed, relative to <ref>
-  npx twd-cli run --record         Record the run to a video file
-  npx twd-cli run --shard 2/4      (beta) Run only this shard's slice of the
-                                   suite and write a report to ./.twd/run
-  npx twd-cli merge <dir>          (beta) Merge shard reports from <dir> into
-                                   one report, exit 1 if the run failed
-
-Examples:
-  npx twd-cli run --test "shows error"
-  npx twd-cli run --test "Login" --test "Signup"
-  npx twd-cli run --shard 2/4
-  npx twd-cli run --record --changed-since origin/main
-  npx twd-cli merge .twd/shards
-
-Options:
-  --test "<name>"        Filter tests by "suite > test" path (repeatable, OR'd)
-  --changed-since <ref>  Run only the tests this branch added or changed since
-                         <ref>, worked out from git. Unions with --test. A
-                         branch that changed no tests prints one line and
-                         exits 0 — an empty result is not a failure. Needs the
-                         base branch in the clone: in GitHub Actions set
-                         fetch-depth: 0 on actions/checkout.
-  --shard <i>/<n>        (beta) Run slice i of n. Each shard discovers the
-                         whole suite and takes every nth test, so the count
-                         never has to be known in advance. Implies a report.
-                         Which tests land in which shard may change.
-  --report-dir <path>    Where to write the shard report (default ./.twd/run)
-  --out <path>           merge only: where to write the merged report
-                         (default ./.twd/merged-run.json)
-  --record               Record the run to a video file (requires ffmpeg)
-  --record-dir <path>    Output directory (default ./twd-artifacts)
-  --record-speed <n>     Playback speed, e.g. 0.5 for half speed
-  --record-pace <ms>     Slow the run itself (default 300). 0 disables pacing
-
-  These three only set values. Recording still has to be turned on with
-  --record or "record": { "enabled": true } in twd.config.json.
-
-  Create a twd.config.json file in your project root to customize settings.
-  `);
-  process.exit(command ? 1 : 0);
+  // A command we do not know is a usage error, so it belongs on stderr with
+  // exit 1. Printing it on stdout, as this used to, let a script mistake the
+  // usage block for a successful run's output.
+  console.error(`twd-cli: unknown command '${command}'`);
+  console.error(globalUsage());
+  process.exitCode = 1;
 }

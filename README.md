@@ -33,6 +33,26 @@ Run tests with default configuration:
 npx twd-cli run
 ```
 
+### Getting help
+
+```bash
+npx twd-cli --help          # the commands
+npx twd-cli run --help      # every run option
+npx twd-cli merge --help
+```
+
+Help prints and exits `0` without launching a browser or reading your config.
+A flag the CLI does not know is refused before anything runs, with the closest
+match suggested, so a typo cannot quietly run the whole suite:
+
+```
+$ npx twd-cli run --tests "Login"
+twd-cli run: unknown option --tests
+
+Did you mean --test?
+Run `twd-cli run --help` to see every option.
+```
+
 ### Filtering tests
 
 Run only a subset of tests with the repeatable `--test` flag. Matching is
