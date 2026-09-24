@@ -1,3 +1,19 @@
+## <small>1.9.0 (2026-09-24)</small>
+
+* feat(cli): `--help` answers without running anything. `npx twd-cli run --help`, `merge --help`, a bare `twd-cli`, `help`, `help <command>`, `--help` and `-h` all print usage to stdout and exit 0 before the CLI loads puppeteer, reads `twd.config.json` or touches git. Until now `run --help` was an unknown token the parser dropped, so it **ran the entire suite**: minutes of wall clock and a browser nobody asked for, with nothing printed to say the flag was not understood (#34)
+* feat(cli): usage is split per command. `run --help` lists every run flag, including `--update-snapshots` and `--ci`, which appeared in neither the old usage block nor the README, and says once that every value flag takes both `--flag value` and `--flag=value` (#34)
+* feat(cli): an unknown `--flag` is refused before anything runs, with the closest known flag suggested — `twd-cli run: unknown option --tests` / `Did you mean --test?`. Both parsers used to drop any token they did not recognise, so a typo ran the whole suite with a filter you believed you had set (#34)
+* fix(cli): an unknown command prints usage on **stderr** and exits 1. It used to print on stdout with exit 1, which a script cannot tell apart from a run's output (#34)
+* note: **a `--flag` the CLI does not know now fails the command.** Anything passing a stray or misspelled flag to `twd-cli run` or `twd-cli merge` used to have it silently ignored; it now exits 1 with the flag named. Positional arguments are unaffected, and both composite actions pass only known flags
+
+The behaviour change is the refusal, and it is the point rather than a side
+effect: `--help` is only reliable if a flag the CLI forgets to route fails
+loudly instead of running the suite. Check any hand-written workflow step that
+passes flags to `twd-cli` before upgrading.
+
+The action's `cli-version` default moves to 1.9.0. Nothing here needs a newer
+`twd-js`.
+
 ## <small>1.8.1 (2026-09-18)</small>
 
 * fix(changed-since): `--changed-since` finds the tests a branch added when the CLI runs below the repository root. `git diff --name-only` reports paths from the root while `git ls-files` reports them from cwd, and those paths are reused relative to cwd — as the pathspec of the diff that reads the added lines, and to read a file back. Below the root the pathspec doubled into `packages/web/packages/web/…`, matched nothing, and a branch that had just added tests reported none. `--relative` makes the two agree (#33)
