@@ -66,6 +66,14 @@ describe("twd-cli help", () => {
     expect(stdout).not.toMatch(/--record/);
   });
 
+  it("run with an unknown flag refuses to run: stderr names it, exit 1", async () => {
+    const { code, stdout, stderr } = await cli("run", "--tests", "foo");
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/unknown option --tests/);
+    expect(stderr).toMatch(/Did you mean --test\?/);
+  });
+
   it("an unknown command is a usage error: stderr, exit 1", async () => {
     const { code, stdout, stderr } = await cli("bogus");
     expect(code).toBe(1);
