@@ -1,5 +1,22 @@
 import { parseShardSpec } from './shard.js';
 
+// Every flag each parser recognises. src/usage.js has to describe all of
+// them, and tests/usage.test.js checks that it does.
+export const RUN_FLAGS = [
+  '--test',
+  '--changed-since',
+  '--shard',
+  '--report-dir',
+  '--update-snapshots',
+  '--ci',
+  '--record',
+  '--record-dir',
+  '--record-speed',
+  '--record-pace',
+];
+
+export const MERGE_FLAGS = ['--out'];
+
 // Reads a flag's value in either `--flag value` or `--flag=value` form, and
 // reports how many tokens it consumed. Shared by both parsers.
 function readValue(argv, token, prefix, index) {
