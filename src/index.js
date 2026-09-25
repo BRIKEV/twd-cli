@@ -199,6 +199,7 @@ export async function runTests(options = {}) {
         // A query with an empty result is not a failure, unlike a --test filter
         // that matched nothing.
         console.log(`No tests changed since ${changedSince} — nothing to run.`);
+        emitReport({});
         return false;
       }
       console.log(
@@ -307,12 +308,14 @@ export async function runTests(options = {}) {
           console.log(
             `No registered test matched the ${changedTitles.length} title(s) changed since ${changedSince}.`
           );
+          emitReport({});
           await browser.close();
           return false;
         }
         console.error(
           `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`
         );
+        emitReport({ error: { message: `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`, diagnostic: null } });
         await browser.close();
         return true;
       }
@@ -694,6 +697,9 @@ export async function runTests(options = {}) {
     return hasFailures;
 
   } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    const diagnostic = config ? explainError(error, config) : null;
+    const reportPath = emitReport({ error: { message, diagnostic: diagnostic ?? null } });
     if (partialStatus.length > 0) {
       const durationMs = startedAt ? Date.now() - startedAt : 0;
       console.log('');
@@ -701,12 +707,11 @@ export async function runTests(options = {}) {
         testStatus: partialStatus,
         handlers: partialHandlers,
         durationMs,
+        reportPath,
       }));
       console.log('\nRun interrupted before completion — results above are partial.');
     }
-    const message = error && error.message ? error.message : String(error);
     console.error(`Error running tests: ${message}`);
-    const diagnostic = explainError(error, config);
     if (diagnostic) {
       console.error(`\n${diagnostic}`);
     } else if (error && error.stack) {

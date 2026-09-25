@@ -1717,6 +1717,9 @@ describe('runTests sharding', () => {
     vi.mocked(transcodeForPlayback).mockReset();
     vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
+    // clearAllMocks keeps implementations, so a previous test's
+    // mockImplementation(() => { throw ... }) on writeFileSync would leak.
+    vi.mocked(fs.writeFileSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -1981,6 +1984,77 @@ describe('runTests sharding', () => {
     expect(report.selection.selectedTests).toBe(1);
     expect(report.shards[0].executed + report.shards[0].notRun)
       .toBe(report.selection.selectedTests);
+  });
+
+  it('writes an interrupted report when the dev server is down', async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    const bootError = new Error('net::ERR_CONNECTION_REFUSED at http://localhost:5173');
+    page.goto = vi.fn().mockRejectedValue(bootError);
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('ERR_CONNECTION_REFUSED');
+
+    const report = runJson();
+    expect(report.outcome).toBe('interrupted');
+    expect(report.error.message).toContain('ERR_CONNECTION_REFUSED');
+    expect(report.error.diagnostic).toContain('Is your dev server running?');
+    expect(report.tests).toEqual([]);
+  });
+
+  it('keeps partial results in an interrupted report', async () => {
+    const { handlers } = fourTests();
+    const page = createMockPage({ handlers });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce(handlers)
+      .mockResolvedValueOnce([{ id: '1', status: 'pass' }])
+      .mockRejectedValue(new Error('Runtime.callFunctionOn timed out'));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    expect(runJson().tests.map((t) => t.status)).toEqual(['pass']);
+  });
+
+  it('still throws the original error when the report cannot be written', async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    page.goto = vi.fn().mockRejectedValue(new Error('boom'));
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(fs.writeFileSync).mockImplementation(() => { throw new Error('EACCES'); });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('boom');
+    expect(warn.mock.calls.some(([m]) => String(m).includes('could not write the run report: EACCES'))).toBe(true);
+  });
+
+  it('keeps the exit code when the report cannot be written', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    vi.mocked(fs.writeFileSync).mockImplementation(() => { throw new Error('EACCES'); });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await runTests()).toBe(false);
+  });
+
+  it('writes an interrupted report when a typed filter matched nothing', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await runTests({ testFilters: ['nope'] })).toBe(true);
+    expect(runJson().outcome).toBe('interrupted');
+    expect(runJson().error.message).toContain('No tests matched filter(s): "nope"');
+  });
+
+  it('writes a passed empty report when no tests changed', async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: [] });
+
+    expect(await runTests({ changedSince: 'origin/main' })).toBe(false);
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    expect(runJson()).toMatchObject({ outcome: 'passed', tests: [] });
   });
 });
 
