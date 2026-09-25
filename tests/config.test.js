@@ -1,5 +1,5 @@
 import { expect, describe, it, beforeEach, afterEach, vi } from 'vitest';
-import { loadConfig, DEFAULT_RECORD } from '../src/config.js';
+import { loadConfig, DEFAULT_RECORD, DEFAULT_REPORT, resolveReportOptions } from '../src/config.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -38,6 +38,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
+      report: DEFAULT_REPORT,
     });
     expect(fs.existsSync).toHaveBeenCalledWith(path.resolve(mockCwd, 'twd.config.json'));
   });
@@ -68,6 +69,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
+      report: DEFAULT_REPORT,
     });
     expect(fs.readFileSync).toHaveBeenCalledWith(
       path.resolve(mockCwd, 'twd.config.json'),
@@ -100,6 +102,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
+      report: DEFAULT_REPORT,
     });
   });
 
@@ -126,6 +129,7 @@ describe('loadConfig', () => {
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
+      report: DEFAULT_REPORT,
     });
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Warning: Could not parse twd.config.json'),
@@ -195,7 +199,7 @@ describe('loadConfig', () => {
 
     expect(loadConfig().record).toEqual({
       enabled: false,
-      dir: './twd-artifacts',
+      dir: null,
       filename: null,
       maxClips: 20,
       format: 'mp4',
@@ -235,7 +239,7 @@ describe('loadConfig', () => {
     expect(record.enabled).toBe(true);
     expect(record.format).toBe('webm');
     // every other default must survive
-    expect(record.dir).toBe('./twd-artifacts');
+    expect(record.dir).toBeNull();
     expect(record.fps).toBe(30);
     expect(record.speed).toBe(1);
     expect(record.hideSidebar).toBe(true);
@@ -291,6 +295,23 @@ describe('loadConfig', () => {
     expect(DEFAULT_RECORD.maxClips).toBe(20);
   });
 
+  it('defaults the report block', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    expect(loadConfig().report).toEqual({ dir: './.twd/report', formats: ['html', 'markdown'] });
+  });
+
+  it('merges a partial report block over the defaults', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ report: { dir: 'out' } }));
+    expect(loadConfig().report).toEqual({ dir: 'out', formats: ['html', 'markdown'] });
+  });
+
+  it('keeps "report": false', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ report: false }));
+    expect(loadConfig().report).toBe(false);
+  });
+
 });
 describe('loadConfig snapshot settings', () => {
   const mockCwd = '/mock/project';
@@ -343,5 +364,35 @@ describe('loadConfig snapshot settings', () => {
     const config = loadConfig();
     expect(config.viewport).toEqual({ width: 375, height: 667 });
     expect(config.record.viewport).toEqual({ width: 1280, height: 1600, deviceScaleFactor: 1 });
+  });
+});
+
+describe('resolveReportOptions', () => {
+  it('defaults to .twd/report with html and markdown', () => {
+    expect(resolveReportOptions(undefined)).toEqual({
+      dir: './.twd/report', formats: ['html', 'markdown'], unknownFormats: [],
+    });
+  });
+
+  it('is off for "report": false', () => {
+    expect(resolveReportOptions(false)).toBeNull();
+  });
+
+  it('is off for --no-report even when config enables it', () => {
+    expect(resolveReportOptions({ dir: 'x' }, { noReport: true })).toBeNull();
+  });
+
+  it('lets --report-dir win over report.dir', () => {
+    expect(resolveReportOptions({ dir: 'x' }, { reportDir: 'y' }).dir).toBe('y');
+  });
+
+  it('separates formats it does not know', () => {
+    const options = resolveReportOptions({ formats: ['html', 'junit'] });
+    expect(options.formats).toEqual(['html']);
+    expect(options.unknownFormats).toEqual(['junit']);
+  });
+
+  it('allows json-only by listing no derived formats', () => {
+    expect(resolveReportOptions({ formats: [] }).formats).toEqual([]);
   });
 });
