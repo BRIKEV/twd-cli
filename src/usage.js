@@ -60,7 +60,7 @@ Sharding (beta):
                          suite and takes every nth test, so the count never
                          has to be known in advance. Implies a report.
                          Which tests land in which shard may change.
-  --report-dir <path>    Where to write the shard report (default ./.twd/run)
+  --report-dir <path>    Where to write the report (default ./.twd/report)
 
 Layout snapshots (beta):
   --update-snapshots     Rewrite layout references that already exist

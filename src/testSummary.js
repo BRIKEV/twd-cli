@@ -25,6 +25,7 @@ export function formatRunComplete({
   maxFailures,
   shards = null,
   computeMs = null,
+  reportPath = null,
 }) {
   const passed = testStatus.filter((t) => t.status === 'pass').length;
   const failed = testStatus.filter((t) => t.status === 'fail').length;
@@ -84,6 +85,8 @@ export function formatRunComplete({
       lines.push('  Fix the failures above, or set "maxFailures": 0 to run all.');
     }
   }
+
+  if (reportPath) lines.push('', `  Report: ${reportPath}`);
 
   return lines.join('\n');
 }
