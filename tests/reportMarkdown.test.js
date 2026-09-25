@@ -34,6 +34,22 @@ describe('renderMarkdown', () => {
     expect(md).not.toContain('roles dump');
   });
 
+  it('attaches snapshot line to test when error names a snapshot', () => {
+    const md = renderMarkdown(report({
+      tests: [{ id: 't1', status: 'fail', error: 'Layout snapshot "invoice-form" differs' }],
+      snapshots: [{ name: 'invoice-form', file: 'snapshots/invoice-form.failed.png' }],
+    }));
+    expect(md).toContain('- ❌ **Invoices › shows empty state** _(3 attempts)_');
+    expect(md).toContain('  > Layout snapshot `invoice-form` differs, diff in the report');
+  });
+
+  it('lists orphan snapshot as its own entry', () => {
+    const md = renderMarkdown(report({
+      snapshots: [{ name: 'orphan', file: 'snapshots/orphan.failed.png' }],
+    }));
+    expect(md).toContain('- ❌ **Layout snapshot** `orphan` differs, diff in the report');
+  });
+
   it('lists a contract failure with the test that used the mock', () => {
     const md = renderMarkdown(report({ contracts: { results: [contractResult({ validation: invalid() })] } }));
     expect(md).toContain('- ❌ **Contract** `GET /invoices 200` (getInvoices), openapi.json');
