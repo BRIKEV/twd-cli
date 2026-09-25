@@ -23,7 +23,7 @@ need to know the test count: each shard boots its own browser, discovers the who
 suite exactly as a normal run does, and keeps every 4th test. Add tests and the
 same 4 jobs just split more of them.
 
-Each shard writes `run.json` and `coverage.json` to `./.twd/run` (change it with
+Each shard writes `run.json` and `coverage.json` to `./.twd/report` (change it with
 `--report-dir`). `merge` reads the downloaded shard directories, combines test
 results, coverage and contract validation, prints one summary, and exits non-zero
 if anything failed anywhere.
@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: twd-run-*
+          pattern: twd-report-*
           path: .twd/shards
 
       - name: Merge the shard reports
@@ -133,8 +133,8 @@ you — installing Chrome, and uploading the report with `if: always()`:
         # from "this shard never ran".
         if: always()
         with:
-          name: twd-run-${{ matrix.shard }}
-          path: .twd/run
+          name: twd-report-${{ matrix.shard }}
+          path: .twd/report
           if-no-files-found: error
 ```
 
@@ -199,7 +199,7 @@ from 25s in one job to 41s across two plus a merge.
   is sharded. As with any filtered run, coverage is skipped.
 - **Recording** produces one clip per shard; they are not concatenated.
 - **A missing shard leaves no merged report on disk.** `merge` throws before it
-  writes `.twd/merged-run.json`, so a CI step that uploads that path with
+  writes `.twd/report/`, so a CI step that uploads that path with
   `if: always()` will find nothing when a shard is missing. The error message on
   stderr is the diagnosis in that case.
 - **`record.filename` collides under sharding.** Only the *derived* recording
