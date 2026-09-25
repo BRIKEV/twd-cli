@@ -71,4 +71,27 @@ describe('renderHtml', () => {
     expect(html).toContain('All tests (3)');
     expect(html).toContain('Invoices &gt; loads');
   });
+
+  it('groups contract warnings by spec', () => {
+    const html = renderHtml(report({
+      contracts: {
+        results: [
+          contractResult({
+            specSource: 'openapi.json',
+            mode: 'warn',
+            validation: { valid: true, errors: [], warnings: [{ message: 'type mismatch' }] }
+          }),
+          contractResult({
+            specSource: 'asyncapi.json',
+            mode: 'warn',
+            validation: { valid: true, errors: [], warnings: [{ message: 'missing field' }] }
+          })
+        ]
+      }
+    }));
+    expect(html).toContain('openapi.json');
+    expect(html).toContain('asyncapi.json');
+    expect(html).toContain('type mismatch');
+    expect(html).toContain('missing field');
+  });
 });

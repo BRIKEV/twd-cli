@@ -83,12 +83,34 @@ function allTests(report) {
 function contracts(report) {
   if (!report.contracts.configured) return '';
   const c = report.summary.contracts;
-  const warnings = contractWarnings(report).map((w) =>
-    `<li><span class="warn">⚠</span>${esc(`${w.method} ${w.matchedPath} ${w.status}`)} (${esc(w.alias)}): ${esc(w.messages.join('; '))}</li>`);
+
+  // Group warnings by spec
+  const warningsBySpec = new Map();
+  for (const w of contractWarnings(report)) {
+    if (!warningsBySpec.has(w.spec)) {
+      warningsBySpec.set(w.spec, []);
+    }
+    warningsBySpec.get(w.spec).push(w);
+  }
+
+  // Build warning rows grouped by spec
+  let warningRows = '';
+  for (const [spec, warnings] of warningsBySpec) {
+    warningRows += `<li class="muted">${esc(spec)}</li>`;
+    for (const w of warnings) {
+      warningRows += `<li><span class="warn">⚠</span>${esc(`${w.method} ${w.matchedPath} ${w.status}`)} (${esc(w.alias)}): ${esc(w.messages.join('; '))}</li>`;
+    }
+  }
+
+  // Build skipped rows
   const skipped = report.contracts.skipped.map((s) =>
     `<li><span class="skip">–</span>${esc(s.url)} <span class="muted">${esc(s.reason)}</span></li>`);
+  if (skipped.length > 0) {
+    warningRows += `<li class="muted">Skipped</li>${skipped.join('')}`;
+  }
+
   return `<details><summary>Contracts: ${c.passed} passed · ${plural(c.errors, 'error')} · ${plural(c.warnings, 'warning')} · ${c.skipped} skipped</summary>`
-    + `<ul class="rows">${warnings.join('')}${skipped.join('')}</ul></details>`;
+    + `<ul class="rows">${warningRows}</ul></details>`;
 }
 
 function artifacts(report) {
