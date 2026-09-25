@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
-import { loadConfig } from './config.js';
+import { loadConfig, resolveReportOptions } from './config.js';
 import { loadContracts, validateMocks } from './contracts.js';
 import { printContractReport } from './contractReport.js';
 import { generateContractMarkdown } from './contractMarkdown.js';
@@ -15,8 +15,12 @@ import { resolveRecordFilename } from './recordFilename.js';
 import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
 import { buildRunReport } from './runReport.js';
-import { writeRunReport, DEFAULT_REPORT_DIR, COVERAGE_FILE } from './reportFiles.js';
-import { writeSnapshotReport, clearFailureCaptures } from './snapshotReport.js';
+import {
+  cleanReportDir, copySnapshotCaptures, writeReportFolder,
+  DEFAULT_REPORT_DIR, RECORDINGS_DIR, HTML_FILE, RUN_REPORT_FILE, COVERAGE_FILE,
+} from './reportFiles.js';
+import { clearFailureCaptures, listFailureCaptures } from './snapshotReport.js';
+import { cliVersion } from './version.js';
 import {
   assertFfmpegCapable,
   createFfmpegLog,
@@ -59,6 +63,7 @@ export async function runTests(options = {}) {
     recordOverrides = {},
     shard = null,
     reportDir = null,
+    noReport = false,
     updateSnapshots = false,
     ci = false,
   } = options;
@@ -74,6 +79,13 @@ export async function runTests(options = {}) {
   let ffmpegLog = null;
   let recordingInfo = null;
   let activeClip = null;
+  const workingDir = process.cwd();
+  let reportOptions = null;
+  let allTestIds = [];
+  let filteredIds = [];
+  let executed = 0;
+  let stoppedEarly = false;
+  const recordingInfos = [];
 
   // Stops the screencast at most once. Must always run before browser.close():
   // if the browser goes first, ffmpeg is orphaned and the file is truncated.
@@ -104,9 +116,82 @@ export async function runTests(options = {}) {
     }
   };
 
+  const SINGLE_SHARD = { index: 1, total: 1 };
+
+  // Never throws: a report that cannot be written must not change the run's outcome.
+  const emitReport = (fields) => {
+    if (!reportOptions || !config) return null;
+    const dir = path.resolve(workingDir, reportOptions.dir);
+    const toReportPath = (file) => path.relative(dir, path.resolve(workingDir, file)).split(path.sep).join('/');
+    try {
+      const snapshots = copySnapshotCaptures(listFailureCaptures(path.resolve(workingDir, config.snapshotDir)), dir);
+      const report = buildRunReport({
+        shard: shard ?? SINGLE_SHARD,
+        startedAt: startedAt ?? Date.now(),
+        endedAt: Date.now(),
+        allTestIds,
+        filteredIds,
+        filters: testFilters,
+        handlers: partialHandlers,
+        tests: partialStatus.map((t) => (t.recording ? { ...t, recording: toReportPath(t.recording) } : t)),
+        executed,
+        notRun: 0,
+        stoppedEarly,
+        retryCount: config.retryCount,
+        version: cliVersion(),
+        url: config.url,
+        snapshots,
+        ...fields,
+        recording: fields.recording ? { ...fields.recording, file: toReportPath(fields.recording.file) } : null,
+        recordings: recordingInfos.map((r) => ({ ...r, file: toReportPath(r.file) })),
+        coverage: fields.coverage ? { file: sharded ? COVERAGE_FILE : toReportPath(fields.coverage.file) } : null,
+      });
+      writeReportFolder(dir, report, {
+        formats: reportOptions.formats,
+        coverage: sharded ? fields.coverageData ?? null : null,
+      });
+      return path.join(reportOptions.dir, reportOptions.formats.includes('html') ? HTML_FILE : RUN_REPORT_FILE)
+        .split(path.sep).join('/').replace(/^\.\//, '');
+    } catch (err) {
+      console.warn(`Warning: could not write the run report: ${err.message}`);
+      return null;
+    }
+  };
+
   try {
     config = loadConfig();
-    const workingDir = process.cwd();
+    // Cleared here, before anything else can crash the run (the ffmpeg probe,
+    // loadContracts, puppeteer.launch, a bad --changed-since ref): nothing
+    // writes a capture before navigation, so a PASSED zero-test report can
+    // never show a stale ".failed.png" from an earlier run.
+    clearFailureCaptures(path.resolve(workingDir, config.snapshotDir));
+    // A sharded run always writes its report: merge needs every shard's
+    // artifact to explain a gap, so --no-report / "report": false are ignored
+    // (with a warning) rather than silently leaving a hole merge cannot diagnose.
+    const shardIgnoredNoReport = sharded && noReport;
+    const shardIgnoredReportFalse = sharded && config.report === false;
+    reportOptions = resolveReportOptions(
+      shardIgnoredReportFalse ? undefined : config.report,
+      { noReport: sharded ? false : noReport, reportDir }
+    );
+    if (shardIgnoredNoReport || shardIgnoredReportFalse) {
+      console.warn('Warning: --shard always writes a report; ignoring --no-report / "report": false.');
+    }
+    if (reportOptions?.unknownFormats.length) {
+      console.warn(`Warning: unknown report format(s) ignored: ${reportOptions.unknownFormats.join(', ')}`);
+    }
+    if (reportOptions) {
+      try {
+        cleanReportDir(path.resolve(workingDir, reportOptions.dir));
+      } catch (err) {
+        // A report that cannot be cleaned must not fail the run: same rule as
+        // a report that cannot be written.
+        console.warn(`Warning: could not clean the report folder: ${err.message}`);
+      }
+    }
+    if (config.contractReportPath) {
+      console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
+    }
 
     // Resolved before anything else, including the ffmpeg probe: a branch that
     // changed no tests then needs neither a browser, nor a dev server, nor
@@ -119,6 +204,7 @@ export async function runTests(options = {}) {
         // A query with an empty result is not a failure, unlike a --test filter
         // that matched nothing.
         console.log(`No tests changed since ${changedSince} — nothing to run.`);
+        emitReport({});
         return false;
       }
       console.log(
@@ -128,6 +214,7 @@ export async function runTests(options = {}) {
     // config.record can be a shared default object; copy instead of mutating it.
     const record = { ...(config.record || {}), ...recordOverrides };
     const recording = Boolean(record.enabled);
+    if (!record.dir) record.dir = path.join(reportOptions?.dir ?? DEFAULT_REPORT_DIR, RECORDINGS_DIR);
 
     if (recording) {
       assertFfmpegCapable(record.ffmpegPath, record.format);
@@ -183,10 +270,6 @@ export async function runTests(options = {}) {
       if (flags.ci) window.__TWD_SNAPSHOT_CI__ = true;
     }, { update: updateSnapshots, ci });
 
-    // Drop captures from earlier runs before this one can add its own, so the
-    // report cannot show a failure that has since been fixed.
-    clearFailureCaptures(path.resolve(workingDir, config.snapshotDir));
-
     // Navigate to your development server
     startedAt = Date.now();
     console.log(`Navigating to ${config.url} ...`);
@@ -212,6 +295,12 @@ export async function runTests(options = {}) {
     });
     partialHandlers = registeredHandlers;
 
+    // The full discovered order, before any filtering. Computed here, ahead of
+    // the filter branch below, so a "no tests matched" report emitted from
+    // inside that branch still shows the real discovery.totalTests instead of
+    // the empty initial value.
+    allTestIds = orderedTestIds(registeredHandlers);
+
     // Resolve filters to a concrete set of test ids (null = run all). Typed
     // --test filters and computed --changed-since titles are one set: filters
     // already OR together, so there is no precedence rule to remember and
@@ -226,12 +315,14 @@ export async function runTests(options = {}) {
           console.log(
             `No registered test matched the ${changedTitles.length} title(s) changed since ${changedSince}.`
           );
+          emitReport({});
           await browser.close();
           return false;
         }
         console.error(
           `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`
         );
+        emitReport({ error: { message: `No tests matched filter(s): ${testFilters.map((f) => `"${f}"`).join(', ')}`, diagnostic: null } });
         await browser.close();
         return true;
       }
@@ -255,13 +346,13 @@ export async function runTests(options = {}) {
 
     // Resolve the ordered id list to run: the filter result, or all tests.
     //
-    // allTestIds is the full ordered list, before filtering or slicing. Its
-    // order is what the fingerprint covers (as paths — the ids themselves are
-    // random per page load) and its length is discovery.totalTests, so every
-    // shard agrees on both regardless of which slice it took. filteredIds is
-    // the list the shards divide, so it is what executed + notRun must total.
-    const allTestIds = orderedTestIds(registeredHandlers);
-    const filteredIds = selectedIds ?? allTestIds;
+    // allTestIds (computed above) is the full ordered list, before filtering or
+    // slicing. Its order is what the fingerprint covers (as paths — the ids
+    // themselves are random per page load) and its length is
+    // discovery.totalTests, so every shard agrees on both regardless of which
+    // slice it took. filteredIds is the list the shards divide, so it is what
+    // executed + notRun must total.
+    filteredIds = selectedIds ?? allTestIds;
     const baseIds = sharded
       ? selectShardIds(filteredIds, shard.index, shard.total)
       : filteredIds;
@@ -380,11 +471,8 @@ export async function runTests(options = {}) {
     // results are always printable even if a chunk never returns.
     const handlers = registeredHandlers;
     partialStatus = [];
-    let executed = 0;
-    let stoppedEarly = false;
     let recordingFailed = false;
     let recordingAbandoned = false;
-    const recordingInfos = [];
     const seenIds = new Set();
 
     for (const ids of chunks) {
@@ -456,6 +544,7 @@ export async function runTests(options = {}) {
         const result = await finishClip(chunkClip, ids.length);
         if (result.failed) recordingFailed = true;
         if (result.info) recordingInfos.push(result.info);
+        if (result.info) for (const entry of partialStatus) if (ids.includes(entry.id)) entry.recording = result.info.file;
       }
 
       if (bail) break;
@@ -589,6 +678,17 @@ export async function runTests(options = {}) {
 
     await browser.close();
 
+    const reportPath = emitReport({
+      endedAt,
+      notRun,
+      recordingFailed,
+      recording: recordingInfo,
+      contracts: contractsBlock,
+      coverageFile: sharded && coverageData ? COVERAGE_FILE : null,
+      coverage: coverageData ? { file: path.join(config.nycOutputDir, 'out.json') } : null,
+      coverageData,
+    });
+
     // The run-complete block is always the last output of a completed run
     console.log('');
     console.log(formatRunComplete({
@@ -598,53 +698,15 @@ export async function runTests(options = {}) {
       notRun,
       stoppedEarly,
       maxFailures: config.maxFailures,
+      reportPath,
     }));
-
-    const snapshotReport = writeSnapshotReport(
-      path.resolve(workingDir, config.snapshotDir),
-      '.twd'
-    );
-    if (snapshotReport) {
-      const skipped = snapshotReport.skipped.length
-        ? `, ${snapshotReport.skipped.length} could not be read`
-        : '';
-      console.log(
-        `Layout snapshot failures: ${snapshotReport.count} captured${skipped}. ` +
-          `Open ${snapshotReport.reportPath}`
-      );
-    }
-
-    // Written last, and only for a sharded run. A run that threw never gets
-    // here on purpose: its artifact stays absent, and `merge` reports the gap as
-    // "a shard job likely failed before uploading", which is the accurate
-    // diagnosis. A half-written report would be a worse lie.
-    if (sharded) {
-      const dir = reportDir ?? DEFAULT_REPORT_DIR;
-      const report = buildRunReport({
-        shard,
-        startedAt,
-        endedAt,
-        allTestIds,
-        filteredIds,
-        filters: testFilters,
-        handlers,
-        tests: testStatus,
-        executed,
-        notRun,
-        stoppedEarly,
-        coverageFile: coverageData ? COVERAGE_FILE : null,
-        // recording keeps its single-clip shape for existing readers.
-        recording: recordingInfo,
-        recordings: recordingInfos,
-        contracts: contractsBlock,
-      });
-      const { reportPath } = writeRunReport(dir, report, coverageData);
-      console.log(`Shard report written to ${reportPath}`);
-    }
 
     return hasFailures;
 
   } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    const diagnostic = config ? explainError(error, config) : null;
+    const reportPath = emitReport({ error: { message, diagnostic: diagnostic ?? null } });
     if (partialStatus.length > 0) {
       const durationMs = startedAt ? Date.now() - startedAt : 0;
       console.log('');
@@ -652,12 +714,11 @@ export async function runTests(options = {}) {
         testStatus: partialStatus,
         handlers: partialHandlers,
         durationMs,
+        reportPath,
       }));
       console.log('\nRun interrupted before completion — results above are partial.');
     }
-    const message = error && error.message ? error.message : String(error);
     console.error(`Error running tests: ${message}`);
-    const diagnostic = explainError(error, config);
     if (diagnostic) {
       console.error(`\n${diagnostic}`);
     } else if (error && error.stack) {

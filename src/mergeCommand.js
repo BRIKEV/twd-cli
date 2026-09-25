@@ -2,9 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { loadConfig } from './config.js';
 import {
-  readShardReports,
-  readShardCoverage,
-  DEFAULT_MERGED_OUT,
+  readShardReports, readShardCoverage, cleanReportDir, writeReportFolder,
+  rebaseShardArtifacts, DEFAULT_REPORT_DIR, HTML_FILE,
 } from './reportFiles.js';
 import {
   mergeRunReports,
@@ -32,6 +31,11 @@ export function runMerge({ dir, out = null } = {}) {
   const config = loadConfig();
   const workingDir = process.cwd();
 
+  // Hoisted so it fires whenever the key is set, not only when contracts are configured.
+  if (config.contractReportPath) {
+    console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
+  }
+
   const found = readShardReports(dir);
   if (found.length === 0) {
     throw new Error(
@@ -40,33 +44,60 @@ export function runMerge({ dir, out = null } = {}) {
     );
   }
 
-  // readShardReports returns readdir order, so twd-run-10 sorts before
-  // twd-run-2. mergeRunReports sorts shards[] by index but concatenates tests
+  // readShardReports returns readdir order, so twd-report-10 sorts before
+  // twd-report-2. mergeRunReports sorts shards[] by index but concatenates tests
   // in argument order, so without this the merged report's tests and its shard
   // list disagree about ordering.
   found.sort((a, b) => (a.report.shards[0]?.index ?? 0) - (b.report.shards[0]?.index ?? 0));
 
-  const merged = mergeRunReports(found.map((f) => f.report));
-
-  // Completeness is enforced here rather than inside mergeRunReports, which must
-  // stay associative. A gap is never a warning: a silent 3-of-4 merge reads as a
-  // complete green run.
-  const missing = findMissingShards(merged);
-  if (missing.length > 0) {
-    const total = merged.shards[0].total;
+  // An interrupted shard's own error explains the run better than a "missing shard" message would.
+  const interrupted = found.find((f) => f.report.outcome === 'interrupted');
+  if (interrupted) {
+    const s = interrupted.report.shards[0];
     throw new Error(
-      `Missing shard report(s): ${missing.map((i) => `${i}/${total}`).join(', ')}. ` +
-      'A shard job likely failed before uploading its artifact — check that the ' +
-      'upload step runs with `if: always()`.'
+      `Shard ${s.index}/${s.total} was interrupted: ${interrupted.report.error?.message ?? 'unknown error'}. ` +
+      'Its results are partial, so the run cannot be merged. Fix that shard and re-run it.'
     );
   }
 
-  const outPath = path.resolve(workingDir, out ?? DEFAULT_MERGED_OUT);
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, `${JSON.stringify(merged, null, 2)}\n`);
-  console.log(`Merged report written to ${outPath}`);
+  const outDir = path.resolve(workingDir, out ?? DEFAULT_REPORT_DIR);
+  const staging = `${outDir}.tmp-merge`;
+  // Read everything before cleaning: out may be the folder the shards were read from.
+  const coverages = found.map((f) => readShardCoverage(f.dir, f.report.shards[0]?.coverageFile ?? null));
+  // A previous merge that threw after staging would otherwise leak into this one's outDir.
+  fs.rmSync(staging, { recursive: true, force: true });
 
-  let hasFailures = merged.tests.some((test) => test.status === 'fail');
+  let merged;
+  try {
+    const rebased = found.map((f) => rebaseShardArtifacts(f.report, f.dir, staging, `shard-${f.report.shards[0].index}`));
+    merged = mergeRunReports(rebased);
+
+    // Completeness is enforced here rather than inside mergeRunReports, which must
+    // stay associative. A gap is never a warning: a silent 3-of-4 merge reads as a
+    // complete green run.
+    const missing = findMissingShards(merged);
+    if (missing.length > 0) {
+      const total = merged.shards[0].total;
+      throw new Error(
+        `Missing shard report(s): ${missing.map((i) => `${i}/${total}`).join(', ')}. ` +
+        'A shard job likely failed before uploading its artifact — check that the ' +
+        'upload step runs with `if: always()`.'
+      );
+    }
+
+    try {
+      cleanReportDir(outDir);
+      fs.mkdirSync(outDir, { recursive: true });
+      // Staged in a sibling folder: cleaning outDir could delete the shard files being copied.
+      if (fs.existsSync(staging)) fs.cpSync(staging, outDir, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(`Warning: could not write the merged report: ${err.message}`);
+    }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+
+  let hasFailures = merged.outcome !== 'passed';
 
   if (merged.contracts.configured) {
     const validationOutput = {
@@ -83,9 +114,9 @@ export function runMerge({ dir, out = null } = {}) {
       );
     }
     if (config.contractReportPath) {
-      const reportPath = path.resolve(workingDir, config.contractReportPath);
-      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-      fs.writeFileSync(reportPath, generateContractMarkdown(validationOutput));
+      const contractPath = path.resolve(workingDir, config.contractReportPath);
+      fs.mkdirSync(path.dirname(contractPath), { recursive: true });
+      fs.writeFileSync(contractPath, generateContractMarkdown(validationOutput));
       console.log(`Contract report written to ${config.contractReportPath}`);
     }
   }
@@ -93,9 +124,6 @@ export function runMerge({ dir, out = null } = {}) {
   // A red run yields no coverage — the same policy a single run has always had,
   // but keyed on the whole merged result instead of one shard's.
   if (config.coverage) {
-    const coverages = found.map((f) =>
-      readShardCoverage(f.dir, f.report.shards[0]?.coverageFile ?? null)
-    );
     const contributors = coverages.filter(Boolean).length;
 
     if (contributors === 0) {
@@ -108,7 +136,12 @@ export function runMerge({ dir, out = null } = {}) {
     } else {
       const nycDir = path.resolve(workingDir, config.nycOutputDir);
       fs.mkdirSync(nycDir, { recursive: true });
-      fs.writeFileSync(path.join(nycDir, 'out.json'), JSON.stringify(mergeCoverage(coverages)));
+      const coveragePath = path.join(nycDir, 'out.json');
+      fs.writeFileSync(coveragePath, JSON.stringify(mergeCoverage(coverages)));
+      // Set on the report before writeReportFolder below, same as a single
+      // run's coverage field — otherwise the merged run.json always reads
+      // coverage: null even though .nyc_output/out.json exists on disk.
+      merged.coverage = { file: path.relative(outDir, coveragePath).split(path.sep).join('/') };
       console.log(
         `Coverage merged from ${contributors}/${found.length} shards to ` +
         `${config.nycOutputDir}/out.json`
@@ -126,6 +159,15 @@ export function runMerge({ dir, out = null } = {}) {
   }
 
   const timings = reportTimings(merged);
+
+  let reportPath = null;
+  try {
+    writeReportFolder(outDir, merged, { formats: ['html', 'markdown'] });
+    reportPath = path.relative(workingDir, path.join(outDir, HTML_FILE)).split(path.sep).join('/');
+  } catch (err) {
+    console.warn(`Warning: could not write the merged report: ${err.message}`);
+  }
+
   console.log('');
   console.log(formatRunComplete({
     testStatus: merged.tests,
@@ -136,6 +178,7 @@ export function runMerge({ dir, out = null } = {}) {
     shards: merged.shards,
     stoppedEarly: merged.shards.some((s) => s.stoppedEarly),
     maxFailures: config.maxFailures,
+    reportPath,
   }));
 
   return hasFailures;

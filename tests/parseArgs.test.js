@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseRunArgs, parseMergeArgs } from "../src/parseArgs.js";
+import { parseRunArgs, parseMergeArgs, parseReportArgs } from "../src/parseArgs.js";
 
 describe("parseRunArgs", () => {
   it("returns empty filters when no args", () => {
-    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
+    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false });
   });
 
   it("parses a single --test <value>", () => {
@@ -13,6 +13,7 @@ describe("parseRunArgs", () => {
       changedSince: null,
       shard: null,
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
@@ -25,6 +26,7 @@ describe("parseRunArgs", () => {
       changedSince: null,
       shard: null,
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
@@ -37,13 +39,14 @@ describe("parseRunArgs", () => {
       changedSince: null,
       shard: null,
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
   });
 
   it("ignores a trailing --test with no value", () => {
-    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, updateSnapshots: false, ci: false });
+    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false });
   });
 
   it("ignores positional tokens", () => {
@@ -90,6 +93,7 @@ describe("parseRunArgs", () => {
       changedSince: null,
       shard: null,
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
@@ -125,6 +129,7 @@ describe("parseRunArgs", () => {
       changedSince: null,
       shard: null,
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
@@ -163,6 +168,7 @@ describe('parseRunArgs shard and report flags', () => {
       record: { enabled: true },
       shard: { index: 2, total: 4 },
       reportDir: null,
+      noReport: false,
       updateSnapshots: false,
       ci: false,
     });
@@ -197,6 +203,15 @@ describe('parseRunArgs shard and report flags', () => {
     expect(result.ci).toBe(true);
   });
 
+});
+
+describe('parseRunArgs --no-report', () => {
+  it('defaults to false', () => {
+    expect(parseRunArgs([]).noReport).toBe(false);
+  });
+  it('sets noReport', () => {
+    expect(parseRunArgs(['--no-report']).noReport).toBe(true);
+  });
 });
 
 describe('parseRunArgs --changed-since', () => {
@@ -316,5 +331,23 @@ describe('parseMergeArgs', () => {
 
   it('takes only the first positional as the directory', () => {
     expect(parseMergeArgs(['a', 'b']).dir).toBe('a');
+  });
+});
+
+describe('parseReportArgs', () => {
+  it('defaults to markdown with no input', () => {
+    expect(parseReportArgs([])).toEqual({ input: null, format: 'markdown' });
+  });
+  it('takes the first positional as input', () => {
+    expect(parseReportArgs(['.twd/report', '--format', 'html'])).toEqual({ input: '.twd/report', format: 'html' });
+  });
+  it('accepts --format=json', () => {
+    expect(parseReportArgs(['--format=json']).format).toBe('json');
+  });
+  it('refuses an unknown format', () => {
+    expect(() => parseReportArgs(['--format', 'junit'])).toThrow(/unknown format "junit".*markdown, html, json/);
+  });
+  it('refuses an unknown option with a suggestion', () => {
+    expect(() => parseReportArgs(['--formt', 'html'])).toThrow(/Did you mean --format\?/);
   });
 });

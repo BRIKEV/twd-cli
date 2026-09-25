@@ -22,14 +22,15 @@ inputs:
     required: false
     default: ''
   report-dir:
-    description: 'Where the shard report is written. Only used when `shard` is set.'
+    description: >-
+      Where the run report folder is written. Leave empty to use report.dir
+      from twd.config.json, or .twd/report if that is not set either.
     required: false
-    default: '.twd/run'
+    default: ''
   upload-report:
     description: >-
-      Upload the shard report as an artifact named `twd-run-<index>`, which is
-      the layout `twd-cli merge` expects after actions/download-artifact. Only
-      used when `shard` is set.
+      Upload the report folder as an artifact named twd-report
+      (twd-report-<index> for a shard, the layout twd-cli merge expects).
     required: false
     default: 'true'
 
@@ -67,29 +68,75 @@ runs:
         fi
         echo "index=${SHARD%%/*}" >> "$GITHUB_OUTPUT"
 
+    - name: Resolve the report directory
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        REPORT_DIR_INPUT: ${{ inputs.report-dir }}
+      run: |
+        # The input wins when set; otherwise twd.config.json is the source of
+        # truth, same as the CLI's own fallback, so this only needs to know
+        # where to look afterwards.
+        DIR=$(node -e "
+          const fs = require('fs');
+          let dir = process.env.REPORT_DIR_INPUT;
+          if (!dir) {
+            try {
+              const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
+              if (config.report && config.report.dir) dir = config.report.dir;
+            } catch {}
+          }
+          console.log(dir || './.twd/report');
+        ")
+        echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+        echo "Report will be written to $DIR"
+
+        # upload-artifact resolves its path from the workspace root, not from
+        # working-directory, so it needs the two joined, and it rejects a '.'
+        # segment like 'app/./x'. Normalising here keeps the join in one place
+        # instead of repeating it in the upload step.
+        UPLOAD_PATH=$(node -e "
+          const path = require('path');
+          console.log(path.normalize(path.join(process.argv[1], process.argv[2])));
+        " "$WORKING_DIRECTORY" "$DIR")
+        echo "upload-path=$UPLOAD_PATH" >> "$GITHUB_OUTPUT"
+
     - name: Run TWD tests
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         SHARD: ${{ inputs.shard }}
-        REPORT_DIR: ${{ inputs.report-dir }}
+        REPORT_DIR_INPUT: ${{ inputs.report-dir }}
       run: |
-        if [ -n "$SHARD" ]; then
-          npx twd-cli run --shard "$SHARD" --report-dir "$REPORT_DIR"
-        else
-          npx twd-cli run
-        fi
+        # Built as an array, and --report-dir is only passed when the caller
+        # set it, so an empty input leaves report.dir from twd.config.json (or
+        # the CLI's own default) in charge instead of overriding it.
+        args=(run)
+        [ -n "$SHARD" ] && args+=(--shard "$SHARD")
+        [ -n "$REPORT_DIR_INPUT" ] && args+=(--report-dir "$REPORT_DIR_INPUT")
+        npx twd-cli "${args[@]}"
 
-    - name: Upload shard report
-      # always(): a red shard must still upload, or `merge` cannot tell "this
-      # shard failed" from "this shard never ran", and it reports the gap as a
-      # missing artifact instead of the real failure.
-      if: always() && inputs.shard != '' && inputs.upload-report == 'true'
+    - name: Write job summary
+      # The merge job writes the summary for a sharded run.
+      if: always() && inputs.shard == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPORT_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        npx twd-cli report "$REPORT_DIR" --format markdown >> "$GITHUB_STEP_SUMMARY" \
+          || echo "::warning::No TWD report to summarise in $REPORT_DIR"
+
+    - name: Upload report
+      # always(): a red run must still surface its report.
+      if: always() && inputs.upload-report == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: twd-run-${{ steps.shard.outputs.index }}
-        path: ${{ inputs.working-directory }}/${{ inputs.report-dir }}
-        if-no-files-found: error
+        name: ${{ steps.shard.outputs.index != '' && format('twd-report-{0}', steps.shard.outputs.index) || 'twd-report' }}
+        path: ${{ steps.resolve.outputs.upload-path }}
+        if-no-files-found: ${{ inputs.shard != '' && 'error' || 'warn' }}
 
     - name: Post contract report to PR
       if: inputs.contract-report == 'true' && github.event_name == 'pull_request'
@@ -100,6 +147,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         SHARD: ${{ inputs.shard }}
+        REPORT_DIR: ${{ steps.resolve.outputs.dir }}
       run: |
         # A sharded run deliberately writes no contract markdown: every shard
         # would overwrite the others with a fraction of the mocks. `twd-cli
@@ -109,22 +157,16 @@ runs:
           exit 0
         fi
 
-        REPORT_PATH=$(node -e "
-          const fs = require('fs');
-          try {
-            const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
-            if (config.contractReportPath) console.log(config.contractReportPath);
-          } catch {}
-        ")
-
-        if [ -z "$REPORT_PATH" ] || [ ! -f "$REPORT_PATH" ]; then
-          echo "No contract report found — skipping PR comment"
+        REPORT_PATH="$REPORT_DIR/summary.md"
+        if [ ! -f "$REPORT_PATH" ]; then
+          echo "No report summary found — skipping PR comment"
           exit 0
         fi
+        BODY=$(mktemp)
+        cp "$REPORT_PATH" "$BODY"
+        echo "" >> "$BODY"
+        echo "[View full report →](${RUN_URL})" >> "$BODY"
 
-        echo "" >> "$REPORT_PATH"
-        echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
-
-        if ! gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH" 2>/dev/null; then
+        if ! gh pr comment "${PR_NUMBER}" --body-file "$BODY" 2>/dev/null; then
           echo "::warning::Could not post contract report to PR. Ensure the workflow has 'pull-requests: write' permission."
         fi

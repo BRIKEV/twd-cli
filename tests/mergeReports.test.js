@@ -40,9 +40,14 @@ function makeReport(index, overrides = {}) {
 
   return {
     schemaVersion,
+    run: { twdCliVersion: '1.10.0', url: 'http://localhost:5173' },
+    error: null,
+    outcome: 'passed',
+    snapshots: [],
     shards: [{
       index, total, startedAt, endedAt, durationMs,
       executed, notRun, failed, stoppedEarly, coverageFile, recording: null,
+      recordingFailed: false,
     }],
     discovery: { totalTests, fingerprint },
     selection: { filters: [], selectedTests },
@@ -66,11 +71,26 @@ describe('mergeRunReports', () => {
 
   it('keeps the single-report shape', () => {
     const merged = mergeRunReports([makeReport(1), makeReport(2), makeReport(3)]);
+    // finalizeReport adds outcome/summary/recordings on top of the merged fields.
     expect(Object.keys(merged).sort()).toEqual(
-      ['contracts', 'discovery', 'handlers', 'schemaVersion', 'selection', 'shards', 'tests'],
+      ['contracts', 'coverage', 'discovery', 'error', 'handlers', 'outcome', 'recordings',
+        'run', 'schemaVersion', 'selection', 'shards', 'snapshots', 'summary', 'tests'],
     );
     expect(merged.handlers).toEqual(HANDLERS);
     expect(merged.discovery).toEqual({ totalTests: 3, fingerprint: FINGERPRINT });
+  });
+
+  it('finalizes the merged report', () => {
+    const merged = mergeRunReports([makeReport(1), makeReport(2)]);
+    expect(merged.summary).toMatchObject({ passed: expect.any(Number), failed: expect.any(Number) });
+    expect(['passed', 'failed']).toContain(merged.outcome);
+    expect(merged.run.url).toBe('http://localhost:5173');
+  });
+
+  it('concatenates snapshots from every shard', () => {
+    const a = { ...makeReport(1), snapshots: [{ name: 'x', file: 'shard-1/snapshots/x.failed.png' }] };
+    const b = { ...makeReport(2), snapshots: [{ name: 'y', file: 'shard-2/snapshots/y.failed.png' }] };
+    expect(mergeRunReports([a, b]).snapshots.map((s) => s.name)).toEqual(['x', 'y']);
   });
 
   // Locks the documented first-wins semantics. These fields are invariant across

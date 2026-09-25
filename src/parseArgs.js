@@ -7,6 +7,7 @@ export const RUN_FLAGS = [
   '--changed-since',
   '--shard',
   '--report-dir',
+  '--no-report',
   '--update-snapshots',
   '--ci',
   '--record',
@@ -16,6 +17,9 @@ export const RUN_FLAGS = [
 ];
 
 export const MERGE_FLAGS = ['--out'];
+
+export const REPORT_FLAGS = ['--format'];
+export const REPORT_FORMAT_CHOICES = ['markdown', 'html', 'json'];
 
 // Reads a flag's value in either `--flag value` or `--flag=value` form, and
 // reports how many tokens it consumed. Shared by both parsers.
@@ -93,6 +97,7 @@ export function parseRunArgs(argv) {
   const record = {};
   let shard = null;
   let reportDir = null;
+  let noReport = false;
   let changedSince = null;
   // Two separate flags on purpose, the way Jest separates them. They close two
   // different holes: --update-snapshots rewrites references that already exist,
@@ -123,6 +128,8 @@ export function parseRunArgs(argv) {
       const { value, consumed } = readValue(argv, token, '--report-dir', i);
       if (value !== undefined) reportDir = value;
       i += consumed - 1;
+    } else if (token === '--no-report') {
+      noReport = true;
     } else if (token === '--update-snapshots') {
       updateSnapshots = true;
     } else if (token === '--ci') {
@@ -158,7 +165,33 @@ export function parseRunArgs(argv) {
 
   if (unknown.length) throw unknownOptionsError('run', unknown, RUN_FLAGS);
 
-  return { testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci };
+  return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci };
+}
+
+// `twd-cli report [<dir|run.json>] [--format <f>]`.
+export function parseReportArgs(argv) {
+  let input = null;
+  let format = 'markdown';
+  const unknown = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--format' || token.startsWith('--format=')) {
+      const { value, consumed } = readValue(argv, token, '--format', i);
+      if (value !== undefined) format = value;
+      i += consumed - 1;
+    } else if (token.startsWith('--')) {
+      unknown.push(token);
+    } else if (input === null) {
+      input = token;
+    }
+  }
+
+  if (unknown.length) throw unknownOptionsError('report', unknown, REPORT_FLAGS);
+  if (!REPORT_FORMAT_CHOICES.includes(format)) {
+    throw new Error(`twd-cli report: unknown format "${format}". Use one of ${REPORT_FORMAT_CHOICES.join(', ')}.`);
+  }
+  return { input, format };
 }
 
 // `twd-cli merge <dir> [--out <path>]`. The directory is the first positional

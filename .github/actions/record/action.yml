@@ -130,15 +130,17 @@ runs:
       env:
         WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
-        # Same shape as the contract report lookup in the `run` action: the
-        # config is the source of truth, and the action only needs to know where
-        # to look afterwards.
+        # Same shape as the `run` action's "Resolve the report directory" step:
+        # the config is the source of truth, and the action only needs to know
+        # where to look afterwards.
         DIR=$(node -e "
           const fs = require('fs');
-          let dir = './twd-artifacts';
+          const path = require('path');
+          let dir = './.twd/report/recordings';
           try {
             const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
             if (config.record && config.record.dir) dir = config.record.dir;
+            else if (config.report && config.report.dir) dir = path.join(config.report.dir, 'recordings');
           } catch {}
           console.log(dir);
         ")
@@ -148,7 +150,7 @@ runs:
         # upload-artifact resolves its path from the workspace root, not from
         # working-directory, so it needs the two joined. It also rejects any '.'
         # or '..' segment, and both halves carry one by default ('.' and
-        # './twd-artifacts'), which concatenated to '././twd-artifacts' and failed
+        # './.twd/report/recordings'), which concatenated to '././.twd/report/recordings' and failed
         # every upload on default inputs. Normalising here keeps the join in one
         # place instead of repeating it in the upload step.
         UPLOAD_PATH=$(node -e "

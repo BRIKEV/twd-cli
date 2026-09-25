@@ -24,9 +24,9 @@ Help is resolved **first**, before either parser runs and before the dynamic `im
 
 **`src/changedTests.js`**: `resolveChangedTitles(ref, cwd)` shells out to git (`execFileSync` with an argument array, never a string — a ref is user input) and returns the `it()` titles this branch added or changed, to feed the same filter path `--test` uses. `extractTitles(source)` is the pure half. Test files are identified by the **suffix** `*.twd.test.*`, never by directory: the examples use `src/twd-tests`, `app/twd-tests` and `src/twd-test` between them, and the suffix also keeps a project's Vitest suite — which uses `it()` too — from contributing titles. Diffs to the **working tree** (`git diff <base>`, no second ref) and adds untracked test files, so uncommitted work counts; in CI the tree is clean and this is identical to `<base> HEAD`.
 
-**`src/parseArgs.js`**: `parseRunArgs(argv)` returns `{ testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci }`. Supports `--test` (repeatable substring filter), `--changed-since`, and the recording flags `--record`, `--record-dir`, `--record-speed`, `--record-pace`. Each accepts both `--flag value` and `--flag=value`; a value starting with `--` is refused, so `--test --record` cannot swallow the flag after it. The returned `record` object is passed to `runTests()` as `recordOverrides` and wins over the config file.
+**`src/parseArgs.js`**: `parseRunArgs(argv)` returns `{ testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci }`. Supports `--test` (repeatable substring filter), `--changed-since`, `--report-dir`, `--no-report`, and the recording flags `--record`, `--record-dir`, `--record-speed`, `--record-pace`. Each accepts both `--flag value` and `--flag=value`; a value starting with `--` is refused, so `--test --record` cannot swallow the flag after it. The returned `record` object is passed to `runTests()` as `recordOverrides` and wins over the config file. `parseReportArgs(argv)` parses `twd-cli report [<dir|run.json>] [--format <f>]` into `{ input, format }`, defaulting `format` to `markdown` and rejecting anything outside `REPORT_FORMAT_CHOICES`.
 
-`RUN_FLAGS` and `MERGE_FLAGS` are the exported list of what each parser recognises, and they do two jobs: `tests/usage.test.js` derives the expected `--help` contents from them, and the "Did you mean" suggestion picks from them. A flag added to a parser has to be added to its list and given a help line in `src/usage.js`, or the suite fails.
+`RUN_FLAGS`, `MERGE_FLAGS` and `REPORT_FLAGS` are the exported list of what each parser recognises, and they do two jobs: `tests/usage.test.js` derives the expected `--help` contents from them, and the "Did you mean" suggestion picks from them. A flag added to a parser has to be added to its list and given a help line in `src/usage.js`, or the suite fails.
 
 Any `--`-prefixed token no branch claimed makes the parser **throw** — `twd-cli run: unknown option --tests`, a suggestion when one is close, and a pointer at `--help` — so the bin's existing catch prints it to stderr and exits 1 without running anything. This is what makes `--help` reliable rather than cosmetic: a flag the bin forgets to route fails loudly instead of running the suite, which is exactly what `run --help` used to do. The suggestion is a prefix match first (`--output` → `--out`), otherwise the nearest flag within **two** edits; the budget is tight on purpose because `--out` passed to `run` must not come back as "Did you mean --ci?". Positionals keep their old treatment: `merge` takes the first as `<dir>`, `run` ignores them.
 
@@ -42,8 +42,16 @@ The numeric guards on the two recording flags differ **on purpose**, so do not h
 
 `record` (`DEFAULT_RECORD`) is the only **nested** config key, so the merge goes two levels deep: `record` merges over `DEFAULT_RECORD`, and `record.viewport` merges over the default viewport. A flat spread would wipe sibling defaults. Recording is off by default and never runs unless explicitly requested.
 
+**`src/version.js`**: `cliVersion()` reads the installed package's version from its own `package.json`, for `run.json`'s `run.twdCliVersion`. Returns `null` under a mocked `fs` or a broken install; the report treats that as unknown rather than crashing.
+
+**`src/needsAttention.js`**: `needsAttention(report)` is the one ordered list of what broke — failed tests (each paired with its snapshot capture when the error names one), remaining snapshot failures, and contract results in `mode: "error"` — that both renderers below read, so the HTML and markdown views can never disagree about what needs attention. `contractWarnings(report)` is the equivalent list for non-fatal contract issues (warn-mode failures and any mode's warnings).
+
+**`src/reportMarkdown.js`** / **`src/reportHtml.js`**: render a `run.json` report (as built by `src/runReport.js`) into `summary.md` / `index.html`. Both drive their failures section from `needsAttention()`; `reportHtml.js` also inlines snapshot captures as data URIs via `loadSnapshotImages()` (`src/reportFiles.js`), so the HTML file is self-contained and safe to upload as a single CI artifact.
+
+**`src/reportCommand.js`**: `renderReport({ input, format })` backs `twd-cli report [<dir|run.json>] --format markdown|html|json` — reads a saved report via `readReport()` (which enforces `REPORT_SCHEMA_VERSION`) and renders it in the requested format to stdout. The command exits 1 only when the report is missing or unreadable.
+
 **`src/index.js`**: `runTests({ testFilters, recordOverrides })` is the main orchestrator:
-1. Loads config via `loadConfig()`, then overlays `recordOverrides` onto a **copy** of `config.record` (never mutate it, it can be the shared `DEFAULT_RECORD` object)
+1. Loads config via `loadConfig()`, resolves report options, and cleans the report folder via `cleanReportDir()` — before anything else, including the ffmpeg probe and the browser launch — then overlays `recordOverrides` onto a **copy** of `config.record` (never mutate it, it can be the shared `DEFAULT_RECORD` object). `record.dir` defaults to `<report dir>/recordings` when unset
 2. Probes ffmpeg via `assertFfmpegCapable()` when recording, before anything expensive, so an unusable binary fails fast instead of after launch and navigation. It checks the **capability**, not the version: `ffmpeg -h muxer=mp4` must list every movflag puppeteer will pass
 3. Launches Puppeteer with configured headless mode and args
 4. `page.setViewport(recording ? record.viewport : config.viewport)` — every run gets an explicit viewport, `1280x800` normally and `1280x1600` while recording
@@ -55,9 +63,10 @@ The numeric guards on the two recording flags differ **on purpose**, so do not h
 10. Starts the screencast when recording. This happens **after** filter resolution, because `page.screencast()` fixes the output path up front and the filename is derived from the tests that survived the filter (`src/recordFilename.js`)
 11. Runs tests in ordered chunks via `runByIds(chunkIds)`, with chunk size controlled by config; accumulates results in Node so the run can stop after `maxFailures` failures and partial results survive a timeout or crash
 12. Stops the recorder through `stopRecording()`, which never awaits a stop whose encoder is already known dead, then reports the artifact — but only after checking the file has bytes on disk. A resolved `stop()` is not evidence of a usable video (see the recording notes below). An mp4 is converted to H.264 before its size is read
-13. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, retried tests, and "Not run" count if stopped early. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`.
-14. Optionally collects `window.__coverage__` and writes to `.nyc_output/out.json` (skipped whenever the run has failures, including an early bail)
-15. Returns boolean `hasFailures`
+13. Optionally collects `window.__coverage__` and writes it to `.nyc_output/out.json` (skipped whenever the run has failures, including an early bail)
+14. Closes the browser, then calls `emitReport()` to write the report folder (`run.json`, plus `index.html`/`summary.md` per `report.formats`). `emitReport` never throws — a write failure is a warning and cannot change the exit code or mask the original error (see Report gotchas below)
+15. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, retried tests, "Not run" count if stopped early, and a final `Report: <path>` line when a report was written. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`
+16. Returns boolean `hasFailures`
 
 **`src/recorder.js`** holds the screencast wrapper: `assertFfmpegCapable()` (pre-flight probe), `createFfmpegLog()` (a puppeteer `logger` that captures ffmpeg's stderr), `FRAMING_CSS` / `applyRecordingFraming()`, `startRecording()` which creates the output dir and calls `page.screencast()`, `watchRecorder()` / `stopRecording()` which keep a dead encoder from hanging the run, and `transcodeForPlayback()` which re-encodes the finished mp4 to H.264.
 
@@ -76,12 +85,33 @@ These are load-bearing and easy to undo by accident:
 - **The required movflags are puppeteer's, not ours.** `REQUIRED_MOVFLAGS` mirrors `ScreenRecorder#getFormatArgs` in puppeteer-core, so re-read that method on a puppeteer bump. This is why the preflight probes `-h muxer=mp4` rather than pinning a version floor — a floor written from one measurement ("7 or newer") was already wrong on the second.
 - **The screencast's own output does not play outside Chrome.** Puppeteer feeds ffmpeg PNG frames with no `-pix_fmt`, so RGB rides into VP9 and the file lands as vp9/`gbrp` in an mp4 container. QuickTime and Preview open neither. `transcodeForPlayback()` re-encodes to h264/`yuv420p` in place after the run; measured on a real capture it also cut 202805 bytes to 49222. Failure there is a warning, never fatal — the untranscoded file is still a correct recording.
 
+### Report gotchas
+
+These are load-bearing and easy to undo by accident:
+
+- **`cleanReportDir` removes only `OWNED_ENTRIES` and `shard-*`, never the directory itself.** `report.dir` may point at a user's own folder, so the clean step deletes exactly the files this tool writes (`run.json`, `coverage.json`, `index.html`, `summary.md`, `recordings/`, `snapshots/`, any `shard-N/`) and leaves everything else — and the directory itself — untouched.
+- **`cleanReportDir` only acts when `run.json` is already in the folder.** That file is the marker that this folder has been a twd report before; without it, a same-named `index.html` or `summary.md` sitting in `report.dir` is presumed to be the user's own and is left alone. The first run into a fresh `report.dir` therefore cleans nothing (there is nothing of ours there yet), and every run after that one cleans normally because `writeReportFolder` always writes `run.json`.
+- **`emitReport` never throws.** A report that cannot be written, or a folder that cannot be cleaned first, is a warning on stderr; it cannot change the run's exit code or mask the original error. The same rule applies to `merge`.
+- **`outcome` must agree with the exit code.** `finalizeReport` (`src/runReport.js`) sets `outcome: "failed"` not just on a failed test but on an error-mode contract failure, `stoppedEarly`, or `recordingFailed` on a green suite — so a passing test run with a broken recording or a contract violation still reports `"failed"`, never `"passed"`.
+- **The report is written from the `catch` path too.** A crash mid-run writes `outcome: "interrupted"` with `error` populated, using whatever partial results were gathered — and `merge` refuses to merge an interrupted shard rather than average it into a false summary.
+- **`merge` reads and stages before it cleans.** `--out` may be the same folder `merge` is reading shards from, so it copies everything into a `<out>.tmp-merge` staging folder first, only then cleans `outDir`, and always removes the staging folder in a `finally` — including on a throw.
+- **Sharded runs always write a report.** `--no-report` and `"report": false` are ignored (with a warning) under `--shard`, because `merge` needs every shard's artifact to explain a gap; a silently missing shard report would look identical to a shard that never ran.
+
 ## Composite actions
 
 `.github/actions/run` and `.github/actions/record` are siblings and should stay
 shaped alike. Both assume the app is **already served** at the url in
 `twd.config.json` — starting a dev server belongs to the caller's workflow, not
 to the action.
+
+`run`'s `report-dir` input defaults to **empty**, not `.twd/report`: a non-empty
+default was always passed to `--report-dir`, which unconditionally overrode
+`report.dir` from `twd.config.json` even when the caller never set the input.
+The "Resolve the report directory" step mirrors the CLI's own fallback (input,
+then `config.report.dir`, then `.twd/report`) purely so the job-summary,
+upload and PR-comment steps know where to look — the `run` step itself only
+passes `--report-dir` when the input is non-empty, exactly like `record` never
+overrides `record.dir` unless asked.
 
 Conventions that are load-bearing in both:
 
@@ -115,6 +145,8 @@ running with `if-no-files-found: error`.
 Tests are in `tests/` and use vitest, one file per `src/` module. The suite mocks `fs` to test config loading and mocks Puppeteer to test the run flow. Coverage is configured for `src/**/*.js` only.
 
 No test may require a real ffmpeg binary or a real browser: `node:child_process` and `page.screencast` are always mocked. The one file that spawns a real process is `tests/cli.test.js`, which runs `bin/twd-cli.js` under `node` with `execFile` to assert exit code and stream for real — the `run --help` bug was invisible to every unit in isolation. Every case in it returns before the dynamic import of `src/index.js`, so no browser is involved, and a regression to running the suite fails on exit code alone because there is no dev server. `tests/runTests.test.js` mocks the two ffmpeg-spawning helpers but deliberately runs the **real** `watchRecorder` / `stopRecording`, because the hang they prevent only appears in the wiring — its recorder stand-ins are real `EventEmitter`s for that reason, since production is handed a `PassThrough`. Note that `vi.mock('fs')` auto-mocks `fs.statSync` to return `undefined`, so anything reading a `Stats` has to tolerate that.
+
+`tests/reportFixtures.js` is the shared builder for a `run.json`-shaped report object, so every test that needs one (renderers, `needsAttention`, merge, the report command) builds it from the same shape instead of hand-rolling a fixture that drifts from the real schema. `tests/reportFolder.test.js` uses a real temporary directory rather than the mocked `fs`, because `cleanReportDir`'s "never delete what it does not own" guarantee is exactly the kind of thing a mock cannot catch getting wrong.
 
 ## Releases
 

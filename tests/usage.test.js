@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { globalUsage, runUsage, mergeUsage } from "../src/usage.js";
-import { RUN_FLAGS, MERGE_FLAGS } from "../src/parseArgs.js";
+import { globalUsage, runUsage, mergeUsage, reportUsage } from "../src/usage.js";
+import { RUN_FLAGS, MERGE_FLAGS, REPORT_FLAGS } from "../src/parseArgs.js";
 
 describe("globalUsage", () => {
   it("names both commands and the help flag", () => {
@@ -9,6 +9,10 @@ describe("globalUsage", () => {
     expect(text).toMatch(/twd-cli merge/);
     expect(text).toMatch(/--help/);
   });
+});
+
+it("globalUsage names the report command", () => {
+  expect(globalUsage()).toMatch(/twd-cli report/);
 });
 
 describe("runUsage", () => {
@@ -40,5 +44,12 @@ describe("mergeUsage", () => {
 
   it("does not describe run", () => {
     expect(mergeUsage()).not.toMatch(/--record/);
+  });
+});
+
+describe("reportUsage", () => {
+  it("names every flag parseReportArgs handles", () => {
+    const text = reportUsage();
+    for (const flag of REPORT_FLAGS) expect(text).toContain(flag);
   });
 });

@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from 'node:events';
+import path from 'path';
 import { runTests } from "../src/index.js";
 import { REPORT_SCHEMA_VERSION } from "../src/runReport.js";
 
 vi.mock('fs');
 vi.mock('puppeteer');
-vi.mock('../src/config.js', () => ({
-  loadConfig: vi.fn(),
-}));
+// resolveReportOptions stays real: it is pure config-shaping logic the report
+// tests exercise directly, and only loadConfig needs a per-test stub.
+vi.mock('../src/config.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    loadConfig: vi.fn(),
+  };
+});
 vi.mock('../src/contracts.js', () => ({
   loadContracts: vi.fn(),
   validateMocks: vi.fn(),
@@ -17,6 +24,10 @@ vi.mock('../src/contractReport.js', () => ({
 }));
 vi.mock('../src/changedTests.js', () => ({
   resolveChangedTitles: vi.fn(),
+}));
+vi.mock('../src/snapshotReport.js', () => ({
+  clearFailureCaptures: vi.fn(),
+  listFailureCaptures: vi.fn(() => []),
 }));
 // The two ffmpeg-spawning helpers are mocked so no test needs a real binary.
 // The two hold helpers are mocked so their call ordering is observable here;
@@ -40,6 +51,7 @@ import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
 import { resolveChangedTitles } from '../src/changedTests.js';
+import { clearFailureCaptures, listFailureCaptures } from '../src/snapshotReport.js';
 import { assertFfmpegCapable, transcodeForPlayback, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
 
 // puppeteer's screencast returns a PassThrough fed by ffmpeg's stdout, and the
@@ -484,7 +496,9 @@ describe("runTests", () => {
 
     // only the 2 evaluate calls happened (enumeration + run); coverage would be a 3rd
     expect(page.evaluate).toHaveBeenCalledTimes(2);
-    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    // The report folder itself still gets written; only coverage is skipped.
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.includes('.nyc_output') || f.endsWith('coverage.json'))).toBe(false);
   });
 
   it("prints the run-complete block last, with failure paths and errors", async () => {
@@ -1708,6 +1722,9 @@ describe('runTests sharding', () => {
     vi.mocked(transcodeForPlayback).mockReset();
     vi.mocked(transcodeForPlayback).mockReturnValue({ ok: true });
     vi.mocked(fs.statSync).mockReset();
+    // clearAllMocks keeps implementations, so a previous test's
+    // mockImplementation(() => { throw ... }) on writeFileSync would leak.
+    vi.mocked(fs.writeFileSync).mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -1733,7 +1750,7 @@ describe('runTests sharding', () => {
 
     await runTests({ shard: { index: 2, total: 2 } });
 
-    expect(fs.mkdirSync).toHaveBeenCalledWith('./.twd/run', { recursive: true });
+    expect(fs.mkdirSync).toHaveBeenCalledWith(path.resolve('./.twd/report'), { recursive: true });
     const report = runJson();
     expect(report.schemaVersion).toBe(REPORT_SCHEMA_VERSION);
     expect(report.shards[0]).toMatchObject({ index: 2, total: 2, executed: 2 });
@@ -1753,10 +1770,9 @@ describe('runTests sharding', () => {
 
     await runTests({ shard: { index: 2, total: 2 } });
 
-    expect(runJson().tests).toEqual([
-      { id: '2', status: 'pass', path: 'b', index: 1 },
-      { id: '4', status: 'pass', path: 'd', index: 3 },
-    ]);
+    const tests = runJson().tests;
+    expect(tests[0]).toMatchObject({ id: '2', status: 'pass', path: 'b', index: 1, attempts: 1 });
+    expect(tests[1]).toMatchObject({ id: '4', status: 'pass', path: 'd', index: 3, attempts: 1 });
   });
 
   // The fingerprint is over paths, not ids, so two shards of the same suite
@@ -1787,17 +1803,143 @@ describe('runTests sharding', () => {
 
     await runTests({ shard: { index: 1, total: 1 }, reportDir: './out' });
 
-    expect(fs.mkdirSync).toHaveBeenCalledWith('./out', { recursive: true });
+    expect(fs.mkdirSync).toHaveBeenCalledWith(path.resolve('./out'), { recursive: true });
   });
 
-  it('writes no report when not sharded', async () => {
+  it('writes a report on a plain run', async () => {
     const { handlers, testStatus } = fourTests();
     const page = createMockPage({ handlers, testStatus });
     vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
 
     await runTests();
 
+    const report = runJson();
+    expect(report.schemaVersion).toBe(REPORT_SCHEMA_VERSION);
+    expect(report.outcome).toBe('passed');
+    expect(report.shards[0]).toMatchObject({ index: 1, total: 1 });
+    expect(report.run.url).toBe('http://localhost:5173');
+  });
+
+  it('writes html and markdown by default', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+
+    await runTests();
+
+    const written = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(written.some((f) => f.endsWith('index.html'))).toBe(true);
+    expect(written.some((f) => f.endsWith('summary.md'))).toBe(true);
+  });
+
+  it('cleans only owned entries before the run', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    // cleanReportDir only acts on a folder that already looks like a twd
+    // report (run.json present); simulate one left by an earlier run.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
+
+    await runTests();
+
+    const removed = vi.mocked(fs.rmSync).mock.calls.map(([f]) => path.basename(String(f)));
+    expect(removed).toEqual(expect.arrayContaining(['run.json', 'index.html', 'summary.md', 'recordings', 'snapshots']));
+    expect(removed).not.toContain('report');
+  });
+
+  // A report failure is a console.warn and must never change the exit code —
+  // cleanReportDir's own rmSync calls are unguarded, so the guard has to live
+  // at the call site, not inside cleanReportDir.
+  it('warns but keeps running when the report folder cannot be cleaned', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    // Otherwise cleanReportDir sees no run.json and returns before ever
+    // calling rmSync, and this test would exercise nothing.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
+    vi.mocked(fs.rmSync).mockImplementation(() => {
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTests();
+
+    expect(result).toBe(false);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('could not clean the report folder') && w.includes('EPERM'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('marks the report failed when a test failed', async () => {
+    const { handlers } = fourTests();
+    const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'x' }] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    expect(await runTests()).toBe(true);
+    expect(runJson().outcome).toBe('failed');
+  });
+
+  it('ends the run-complete block with the report path', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+
+    await runTests();
+
+    const block = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('--- Run complete'));
+    expect(block.split('\n').at(-1)).toBe('  Report: .twd/report/index.html');
+  });
+
+  it('writes nothing and cleans nothing with --no-report', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+
+    await runTests({ noReport: true });
+
     expect(runJson()).toBeNull();
+    expect(fs.rmSync).not.toHaveBeenCalled();
+  });
+
+  it('honours "report": false', async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, report: false });
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+
+    await runTests();
+
+    expect(runJson()).toBeNull();
+  });
+
+  // merge needs every shard's artifact to explain a gap, so a sharded run
+  // always writes its report even when --no-report / "report": false ask
+  // it not to.
+  it('always writes a report when sharded, even with --no-report', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTests({ shard: { index: 1, total: 1 }, noReport: true });
+
+    expect(runJson()).not.toBeNull();
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('--shard always writes a report'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('defaults recordings into the report folder', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: { enabled: true, dir: null, format: 'mp4', viewport: { width: 1280, height: 1600 }, pace: 0 },
+    });
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(fs.statSync).mockReturnValue({ size: 100 });
+
+    await runTests();
+
+    const [options] = page.screencast.mock.calls[0];
+    expect(options.path).toContain(path.join('.twd', 'report', 'recordings'));
   });
 
   // 3 tests across 4 shards leaves the fourth with nothing to run. It must
@@ -1854,6 +1996,80 @@ describe('runTests sharding', () => {
     expect(report.shards[0].executed + report.shards[0].notRun)
       .toBe(report.selection.selectedTests);
   });
+
+  it('writes an interrupted report when the dev server is down', async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    const bootError = new Error('net::ERR_CONNECTION_REFUSED at http://localhost:5173');
+    page.goto = vi.fn().mockRejectedValue(bootError);
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('ERR_CONNECTION_REFUSED');
+
+    const report = runJson();
+    expect(report.outcome).toBe('interrupted');
+    expect(report.error.message).toContain('ERR_CONNECTION_REFUSED');
+    expect(report.error.diagnostic).toContain('Is your dev server running?');
+    expect(report.tests).toEqual([]);
+  });
+
+  it('keeps partial results in an interrupted report', async () => {
+    const { handlers } = fourTests();
+    const page = createMockPage({ handlers });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce(handlers)
+      .mockResolvedValueOnce([{ id: '1', status: 'pass' }])
+      .mockRejectedValue(new Error('Runtime.callFunctionOn timed out'));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, chunkSize: 1 });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    expect(runJson().tests.map((t) => t.status)).toEqual(['pass']);
+  });
+
+  it('still throws the original error when the report cannot be written', async () => {
+    const page = createMockPage({ handlers: [], testStatus: [] });
+    page.goto = vi.fn().mockRejectedValue(new Error('boom'));
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(fs.writeFileSync).mockImplementation(() => { throw new Error('EACCES'); });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow('boom');
+    expect(warn.mock.calls.some(([m]) => String(m).includes('could not write the run report: EACCES'))).toBe(true);
+  });
+
+  it('keeps the exit code when the report cannot be written', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    vi.mocked(fs.writeFileSync).mockImplementation(() => { throw new Error('EACCES'); });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await runTests()).toBe(false);
+  });
+
+  it('writes an interrupted report when a typed filter matched nothing', async () => {
+    const { handlers, testStatus } = fourTests();
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await runTests({ testFilters: ['nope'] })).toBe(true);
+    expect(runJson().outcome).toBe('interrupted');
+    expect(runJson().error.message).toContain('No tests matched filter(s): "nope"');
+    // allTestIds has to be resolved before this early return, not after it, or
+    // discovery.totalTests reads 0 on a suite that plainly registered 4 tests.
+    expect(runJson().discovery.totalTests).toBe(4);
+  });
+
+  it('writes a passed empty report when no tests changed', async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: [] });
+
+    expect(await runTests({ changedSince: 'origin/main' })).toBe(false);
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    expect(runJson()).toMatchObject({ outcome: 'passed', tests: [] });
+  });
 });
 
 describe('runTests non-regression: non-sharded behavior is unchanged', () => {
@@ -1881,7 +2097,9 @@ describe('runTests non-regression: non-sharded behavior is unchanged', () => {
 
     await runTests();
 
-    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    // The report folder itself still gets written; only coverage is skipped.
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.includes('.nyc_output') || f.endsWith('coverage.json'))).toBe(false);
   });
 
   // The successful coverage write. Splitting its if/else apart is the most
@@ -1895,10 +2113,12 @@ describe('runTests non-regression: non-sharded behavior is unchanged', () => {
 
     await runTests();
 
+    // The report folder also writes its own files now; only the coverage
+    // destination is pinned here.
     const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
-    expect(files).toHaveLength(1);
-    expect(files[0].includes('.nyc_output')).toBe(true);
-    expect(files[0].endsWith('out.json')).toBe(true);
+    const coverageFile = files.find((f) => f.includes('.nyc_output'));
+    expect(coverageFile).toBeDefined();
+    expect(coverageFile.endsWith('out.json')).toBe(true);
   });
 
   // Likewise the early-stop contract skip.
@@ -2136,6 +2356,8 @@ describe("runTests --changed-since", () => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     vi.mocked(resolveChangedTitles).mockReset();
+    vi.mocked(clearFailureCaptures).mockReset();
+    vi.mocked(listFailureCaptures).mockReset().mockReturnValue([]);
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -2185,6 +2407,26 @@ describe("runTests --changed-since", () => {
     expect(logs).toMatch(/origin\/main/);
   });
 
+  // A leftover ".failed.png" from an earlier run must not leak into a report
+  // this run never wrote a capture for. listFailureCaptures below stands in
+  // for the real directory listing: it "sees" the stale capture only until
+  // clearFailureCaptures has run, exactly as the real filesystem would.
+  it("clears stale snapshot captures before a zero-match report, not just before navigation", async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: [], files: [], base: 'b' });
+    vi.mocked(listFailureCaptures).mockImplementation(() =>
+      (vi.mocked(clearFailureCaptures).mock.calls.length > 0
+        ? []
+        : [{ name: 'stale', path: '/x/stale.failed.png' }])
+    );
+
+    await runTests({ changedSince: 'origin/main' });
+
+    expect(clearFailureCaptures).toHaveBeenCalled();
+    const call = vi.mocked(fs.writeFileSync).mock.calls.find(([f]) => String(f).endsWith('run.json'));
+    const report = JSON.parse(String(call[1]));
+    expect(report.snapshots).toEqual([]);
+  });
+
   it("exits 0 when the changed titles match no registered test", async () => {
     vi.mocked(resolveChangedTitles).mockReturnValue({
       titles: ['a test that is not registered'],
@@ -2194,6 +2436,12 @@ describe("runTests --changed-since", () => {
     puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([])));
 
     await expect(runTests({ changedSince: 'origin/main' })).resolves.toBe(false);
+
+    // allTestIds has to be resolved before this early return, not after it, or
+    // discovery.totalTests reads 0 on a suite that plainly registered 3 tests.
+    const call = vi.mocked(fs.writeFileSync).mock.calls.find(([f]) => String(f).endsWith('run.json'));
+    const report = JSON.parse(String(call[1]));
+    expect(report.discovery.totalTests).toBe(3);
   });
 
   it("runs the union of --changed-since and --test", async () => {

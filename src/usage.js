@@ -19,6 +19,7 @@ Usage:
                                    served at the url in twd.config.json
   npx twd-cli merge <dir> [--out]  (beta) Merge shard reports from <dir> into
                                    one report, exit 1 if the run failed
+  npx twd-cli report [<dir>]       Print a saved report as markdown, html or json
   npx twd-cli <command> --help     Every option for that command
 
 Examples:
@@ -27,6 +28,7 @@ Examples:
   npx twd-cli run --record --changed-since origin/main
   npx twd-cli run --shard 2/4
   npx twd-cli merge .twd/shards
+  npx twd-cli report --format markdown >> "$GITHUB_STEP_SUMMARY"
 
 Create a twd.config.json file in your project root to customize settings.
 `;
@@ -60,7 +62,11 @@ Sharding (beta):
                          suite and takes every nth test, so the count never
                          has to be known in advance. Implies a report.
                          Which tests land in which shard may change.
-  --report-dir <path>    Where to write the shard report (default ./.twd/run)
+
+Report:
+  Every run writes run.json, index.html and summary.md to ./.twd/report.
+  --report-dir <path>    Where to write the report (default ./.twd/report)
+  --no-report            Write no report, and leave an existing one alone
 
 Layout snapshots (beta):
   --update-snapshots     Rewrite layout references that already exist
@@ -69,7 +75,7 @@ Layout snapshots (beta):
 
 Recording:
   --record               Record the run to a video file (requires ffmpeg 8+)
-  --record-dir <path>    Output directory (default ./twd-artifacts)
+  --record-dir <path>    Output directory (default <report dir>/recordings)
   --record-speed <n>     Playback speed, e.g. 0.5 for half speed
   --record-pace <ms>     Slow the run itself (default 300). 0 disables pacing
 
@@ -97,11 +103,32 @@ Usage:
 any shard recorded a failure. <dir> is the first positional argument.
 
 Options:
-  --out <path>           Where to write the merged report
-                         (default ./.twd/merged-run.json)
+  --out <path>           Where to write the merged report folder
+                         (default ./.twd/report)
 
 Examples:
   npx twd-cli merge .twd/shards
-  npx twd-cli merge .twd/shards --out merged.json
+  npx twd-cli merge .twd/shards --out merged
+`;
+}
+
+export function reportUsage() {
+  return `
+${HEADER}
+
+Usage:
+  npx twd-cli report [<dir|run.json>] [options]
+
+Prints a saved run report to stdout. <dir> defaults to ./.twd/report. Exits 0
+when it rendered, 1 when the report is missing or unreadable. The run's
+verdict belongs to \`run\` and \`merge\`, not to this command.
+
+Options:
+  --format <f>           markdown (default), html or json
+
+Examples:
+  npx twd-cli report
+  npx twd-cli report .twd/report --format markdown >> "$GITHUB_STEP_SUMMARY"
+  npx twd-cli report --format html > report.html
 `;
 }

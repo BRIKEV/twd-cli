@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRunReport, fingerprintTests, REPORT_SCHEMA_VERSION } from '../src/runReport.js';
+import { buildRunReport, fingerprintTests, finalizeReport, contractCounts, REPORT_SCHEMA_VERSION } from '../src/runReport.js';
 
 const handlers = [
   { id: 's1', name: 'Login', parent: null, type: 'suite' },
@@ -63,8 +63,8 @@ describe('buildRunReport', () => {
   // from REPORT_SCHEMA_VERSION, so editing the constant would otherwise leave
   // all 438 tests green — and the version's only job is to be a tripwire for
   // shards produced by mismatched twd-cli builds.
-  it('is at schema version 2', () => {
-    expect(REPORT_SCHEMA_VERSION).toBe(2);
+  it('is at schema version 3', () => {
+    expect(REPORT_SCHEMA_VERSION).toBe(3);
   });
 
   it('stamps the schema version', () => {
@@ -126,9 +126,9 @@ describe('buildRunReport', () => {
 
   // path is for display, index is for identity. See buildRunReport.
   it('stamps each test with its resolved path and its position in the order', () => {
-    expect(build({ tests: [{ id: 't3', status: 'fail', error: 'boom' }] }).tests).toEqual([
-      { id: 't3', status: 'fail', error: 'boom', path: 'Login > still works', index: 2 },
-    ]);
+    expect(build({ tests: [{ id: 't3', status: 'fail', error: 'boom' }] }).tests[0]).toMatchObject({
+      id: 't3', status: 'fail', error: 'boom', path: 'Login > still works', index: 2,
+    });
   });
 
   // Positions are shard-independent, so a merged report can detect a genuine
@@ -143,7 +143,7 @@ describe('buildRunReport', () => {
   // Renderers fall back on a null path; inventing one would be worse.
   it('leaves path null and index null when the handler is missing', () => {
     const report = build({ tests: [{ id: 'ghost', status: 'pass' }] });
-    expect(report.tests[0]).toEqual({ id: 'ghost', status: 'pass', path: null, index: null });
+    expect(report.tests[0]).toMatchObject({ id: 'ghost', status: 'pass', path: null, index: null });
   });
 
   it('copies the filters rather than aliasing them', () => {
@@ -192,5 +192,119 @@ describe('buildRunReport', () => {
       { file: 'twd-artifacts/login-also-works.mp4', bytes: 20488 },
     ];
     expect(build({ recordings }).shards[0].recordings).toEqual(recordings);
+  });
+});
+
+const valid = { valid: true, errors: [], warnings: [] };
+const invalid = { valid: false, errors: [{ path: 'a', message: 'bad' }], warnings: [] };
+const warned = { valid: true, errors: [], warnings: [{ message: 'hm' }] };
+
+describe('schema v3', () => {
+  it('is version 3', () => {
+    expect(REPORT_SCHEMA_VERSION).toBe(3);
+    expect(build().schemaVersion).toBe(3);
+  });
+
+  it('records the run header', () => {
+    const report = build({ version: '1.10.0', url: 'http://localhost:5173' });
+    expect(report.run).toEqual({
+      twdCliVersion: '1.10.0',
+      url: 'http://localhost:5173',
+      startedAt: new Date(1_000).toISOString(),
+      endedAt: new Date(4_500).toISOString(),
+      durationMs: 3_500,
+    });
+  });
+
+  it('counts results into summary', () => {
+    const report = build({
+      tests: [{ id: 't1', status: 'pass' }, { id: 't2', status: 'fail' }, { id: 't3', status: 'skip' }],
+      executed: 3,
+    });
+    expect(report.summary).toMatchObject({ passed: 1, failed: 1, skipped: 1, notRun: 0, stoppedEarly: false });
+  });
+
+  it('is passed when nothing failed', () => {
+    expect(build().outcome).toBe('passed');
+  });
+
+  it('is failed when a test failed', () => {
+    expect(build({ tests: [{ id: 't1', status: 'fail' }] }).outcome).toBe('failed');
+  });
+
+  // The green-dashboard case: every test passed, an error-mode contract did not.
+  it('is failed when only an error-mode contract failed', () => {
+    const contracts = { configured: true, partial: false, skipped: [], results: [{ mode: 'error', validation: invalid }] };
+    expect(build({ contracts }).outcome).toBe('failed');
+  });
+
+  it('stays passed when only a warn-mode contract failed', () => {
+    const contracts = { configured: true, partial: false, skipped: [], results: [{ mode: 'warn', validation: invalid }] };
+    expect(build({ contracts }).outcome).toBe('passed');
+  });
+
+  it('is failed when the recording failed', () => {
+    expect(build({ recordingFailed: true }).outcome).toBe('failed');
+  });
+
+  it('is interrupted when an error is given, whatever the tests say', () => {
+    const report = build({ error: { message: 'boom', diagnostic: null } });
+    expect(report.outcome).toBe('interrupted');
+    expect(report.error).toEqual({ message: 'boom', diagnostic: null });
+  });
+
+  it('counts attempts per status', () => {
+    const report = build({
+      retryCount: 2,
+      tests: [
+        { id: 't1', status: 'pass' },
+        { id: 't2', status: 'pass', retryAttempt: 2 },
+        { id: 't3', status: 'fail' },
+      ],
+    });
+    expect(report.tests.map((t) => t.attempts)).toEqual([1, 2, 3]);
+  });
+
+  it('lifts recordings and snapshots to the top level', () => {
+    const recordings = [{ file: 'recordings/run.mp4', bytes: 10 }];
+    const snapshots = [{ name: 'form', file: 'snapshots/form.failed.png' }];
+    const report = build({ recordings, snapshots });
+    expect(report.recordings).toEqual(recordings);
+    expect(report.snapshots).toEqual(snapshots);
+  });
+
+  it('defaults coverage to null', () => {
+    expect(build().coverage).toBeNull();
+  });
+});
+
+describe('contractCounts', () => {
+  it('buckets results by severity', () => {
+    expect(contractCounts({
+      skipped: [{}],
+      results: [
+        { mode: 'error', validation: valid },
+        { mode: 'error', validation: invalid },
+        { mode: 'warn', validation: invalid },
+        { mode: 'error', validation: warned },
+      ],
+    })).toEqual({ passed: 1, errors: 1, warnings: 2, skipped: 1 });
+  });
+
+  it('tolerates a result without a validation block', () => {
+    expect(contractCounts({ skipped: [], results: [{ alias: 'a' }] }).passed).toBe(1);
+  });
+});
+
+describe('finalizeReport', () => {
+  it('is idempotent', () => {
+    const once = build({ tests: [{ id: 't1', status: 'fail' }] });
+    expect(finalizeReport(finalizeReport(once))).toEqual(once);
+  });
+
+  it('spans every shard in run timings', () => {
+    const report = build();
+    report.shards.push({ ...report.shards[0], index: 3, startedAt: new Date(500).toISOString(), endedAt: new Date(9_000).toISOString() });
+    expect(finalizeReport(report).run).toMatchObject({ durationMs: 8_500 });
   });
 });

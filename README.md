@@ -4,6 +4,7 @@ CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) �
 
 - [Installation](#installation)
 - [Usage](#usage): running tests, filtering, configuration
+- [Run report](#run-report): the `.twd/report/` folder every run writes
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
@@ -161,8 +162,65 @@ Create a `twd.config.json` file in your project root:
 | `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
 | `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
+| `report` | object | `{ "dir": ".twd/report", "formats": ["html", "markdown"] }` | Run report folder and views; `false` disables it |
 
 **Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
+
+## Run report
+
+Every `npx twd-cli run` writes a report folder, `.twd/report/` by default:
+
+```
+.twd/report/
+  run.json       # machine-readable result
+  index.html     # open in a browser — results, failures, recordings, layout snapshots
+  summary.md     # for PRs, GitHub Step Summaries, and CI logs
+  recordings/    # video clips, when --record is set
+  snapshots/     # layout snapshot captures, for a run with a failure
+```
+
+The last line of a run points at it:
+
+```
+  Report: .twd/report/index.html
+```
+
+An AI agent or script should read `run.json` rather than parse console output:
+`outcome` (`"passed"`, `"failed"`, or `"interrupted"`), `summary` (pass/fail/skip
+counts), and `tests[].error` for what broke.
+
+Print a saved report to stdout — useful for a CI job summary:
+
+```bash
+npx twd-cli report --format markdown >> "$GITHUB_STEP_SUMMARY"
+```
+
+`--format` accepts `markdown` (default), `html`, or `json`.
+
+### Configuring the report
+
+```json
+{
+  "report": {
+    "dir": ".twd/report",
+    "formats": ["html", "markdown"]
+  }
+}
+```
+
+Set `"report": false` to disable it entirely. Flags override the config for a
+single run:
+
+```bash
+npx twd-cli run --report-dir ./ci-report   # write it elsewhere
+npx twd-cli run --no-report                # skip it for this run
+```
+
+A [sharded](#sharding-across-ci-jobs) run always writes its report — `--no-report`
+and `"report": false` are ignored (with a warning) when `--shard` is set, since
+`merge` needs every shard's report to join them back together.
+
+Add `.twd/` to your project's `.gitignore` — the folder is rewritten on every run.
 
 ## Recording
 
@@ -205,7 +263,7 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
-| `dir` | string | `"./twd-artifacts"` | Where the video is written |
+| `dir` | string | `<report dir>/recordings` | Where the video is written |
 | `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests. Setting it also records the whole run to one clip, since one name cannot address several |
 | `maxClips` | number | `20` | Most clips one run splits into. Past it the whole run goes to a single file. `0` disables the bound |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
@@ -253,18 +311,18 @@ is a failure and not a write.
 
 A failure writes `<name>.failed.png` next to the reference: your page as it
 rendered, with the rows that diverged boxed in red. In CI the machine that
-produced it is gone by the time anyone looks, so twd-cli also writes a
-self-contained **`.twd/snapshot-report.html`** with every capture embedded.
+produced it is gone by the time anyone looks, so every capture also appears
+embedded in the [run report](#run-report)'s **`.twd/report/index.html`**.
 
 One file, one artifact, opens in any browser:
 
 ```yaml
-- name: Upload layout snapshot failures
+- name: Upload the run report
   if: failure()
   uses: actions/upload-artifact@v4
   with:
     name: layout-snapshots
-    path: .twd/snapshot-report.html
+    path: .twd/report
 ```
 
 Captures from earlier runs are cleared before each run, so the report only ever
@@ -352,8 +410,8 @@ jobs:
 | `working-directory` | `.` | Directory where `twd.config.json` lives |
 | `contract-report` | `false` | Post contract validation summary as a PR comment |
 | `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. See [Sharding](#sharding-across-ci-jobs) |
-| `report-dir` | `.twd/run` | Where the shard report is written. Only used when `shard` is set |
-| `upload-report` | `true` | Upload the shard report as an artifact named `twd-run-<index>`, the layout `twd-cli merge` expects. Only used when `shard` is set |
+| `report-dir` | (empty) | Where the run report folder is written. Empty uses `report.dir` from `twd.config.json`, or `.twd/report` if that isn't set either |
+| `upload-report` | `true` | Upload the report folder as an artifact named `twd-report` (`twd-report-<index>` for a shard), the layout `twd-cli merge` expects |
 
 #### With code coverage
 
@@ -537,7 +595,6 @@ contracts/
 ```json
 {
   "url": "http://localhost:5173",
-  "contractReportPath": ".twd/contract-report.md",
   "contracts": [
     {
       "source": "./contracts/users-3.0.json",
@@ -554,6 +611,9 @@ contracts/
   ]
 }
 ```
+
+`contractReportPath` is **deprecated** and will be removed — contract results
+now appear in the [run report](#run-report)'s `summary.md` automatically.
 
 ### Contract Options
 
