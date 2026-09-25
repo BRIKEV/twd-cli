@@ -216,6 +216,10 @@ npx twd-cli run --report-dir ./ci-report   # write it elsewhere
 npx twd-cli run --no-report                # skip it for this run
 ```
 
+A [sharded](#sharding-across-ci-jobs) run always writes its report — `--no-report`
+and `"report": false` are ignored (with a warning) when `--shard` is set, since
+`merge` needs every shard's report to join them back together.
+
 Add `.twd/` to your project's `.gitignore` — the folder is rewritten on every run.
 
 ## Recording

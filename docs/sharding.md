@@ -99,11 +99,12 @@ jobs:
 `merge` owns the final exit code: it fails if any test failed in any shard, if a
 contract was violated in `error` mode, or if a shard report is missing entirely.
 
-### Posting the contract report
+### Posting the report
 
-A sharded run deliberately writes no contract markdown per shard — each would
-overwrite the others with a fraction of the mocks — so `merge` writes it, and the
-PR comment belongs in the merge job:
+Each shard's own report only covers its slice of the suite, so posting one
+shard's `summary.md` would show a fraction of the picture. `merge` writes the
+joined report — `summary.md` included — so the PR comment belongs in the merge
+job instead:
 
 ```yaml
   merge:
@@ -113,11 +114,11 @@ PR comment belongs in the merge job:
     steps:
       # ...as above, through "Merge the shard reports"...
 
-      - name: Post contract report to PR
-        if: github.event_name == 'pull_request' && hashFiles('.twd/contract-report.md') != ''
+      - name: Post the report to PR
+        if: github.event_name == 'pull_request' && hashFiles('.twd/report/summary.md') != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file .twd/contract-report.md
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file .twd/report/summary.md
 ```
 
 ## Without the bundled action
@@ -187,6 +188,9 @@ from 25s in one job to 41s across two plus a merge.
 - **Missing shards are an error.** If a shard job dies before uploading, `merge`
   refuses and names the gap rather than silently reporting 3 of 4 shards as a
   complete green run.
+- **A shard always writes its report.** `--no-report` and `"report": false` are
+  ignored (with a warning) when `--shard` is set, because `merge` needs every
+  shard's report to join them back together.
 - **Tests must register identically in every job.** Each shard fingerprints the
   ordered list of `"suite > test"` paths it discovered and `merge` verifies they
   match. Registering tests conditionally — behind a feature flag, a date,
