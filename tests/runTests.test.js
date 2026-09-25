@@ -1834,6 +1834,28 @@ describe('runTests sharding', () => {
     expect(removed).not.toContain('report');
   });
 
+  // A report failure is a console.warn and must never change the exit code —
+  // cleanReportDir's own rmSync calls are unguarded, so the guard has to live
+  // at the call site, not inside cleanReportDir.
+  it('warns but keeps running when the report folder cannot be cleaned', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(fs.rmSync).mockImplementation(() => {
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTests();
+
+    expect(result).toBe(false);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('could not clean the report folder') && w.includes('EPERM'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
   it('marks the report failed when a test failed', async () => {
     const { handlers } = fourTests();
     const page = createMockPage({ handlers, testStatus: [{ id: '1', status: 'fail', error: 'x' }] });
@@ -1871,6 +1893,23 @@ describe('runTests sharding', () => {
     await runTests();
 
     expect(runJson()).toBeNull();
+  });
+
+  // merge needs every shard's artifact to explain a gap, so a sharded run
+  // always writes its report even when --no-report / "report": false ask
+  // it not to.
+  it('always writes a report when sharded, even with --no-report', async () => {
+    const { handlers, testStatus } = fourTests();
+    const page = createMockPage({ handlers, testStatus });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTests({ shard: { index: 1, total: 1 }, noReport: true });
+
+    expect(runJson()).not.toBeNull();
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes('--shard always writes a report'))).toBe(true);
+    warnSpy.mockRestore();
   });
 
   it('defaults recordings into the report folder', async () => {

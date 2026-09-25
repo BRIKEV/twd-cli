@@ -160,11 +160,30 @@ export async function runTests(options = {}) {
 
   try {
     config = loadConfig();
-    reportOptions = resolveReportOptions(config.report, { noReport, reportDir });
+    // A sharded run always writes its report: merge needs every shard's
+    // artifact to explain a gap, so --no-report / "report": false are ignored
+    // (with a warning) rather than silently leaving a hole merge cannot diagnose.
+    const shardIgnoredNoReport = sharded && noReport;
+    const shardIgnoredReportFalse = sharded && config.report === false;
+    reportOptions = resolveReportOptions(
+      shardIgnoredReportFalse ? undefined : config.report,
+      { noReport: sharded ? false : noReport, reportDir }
+    );
+    if (shardIgnoredNoReport || shardIgnoredReportFalse) {
+      console.warn('Warning: --shard always writes a report; ignoring --no-report / "report": false.');
+    }
     if (reportOptions?.unknownFormats.length) {
       console.warn(`Warning: unknown report format(s) ignored: ${reportOptions.unknownFormats.join(', ')}`);
     }
-    if (reportOptions) cleanReportDir(path.resolve(workingDir, reportOptions.dir));
+    if (reportOptions) {
+      try {
+        cleanReportDir(path.resolve(workingDir, reportOptions.dir));
+      } catch (err) {
+        // A report that cannot be cleaned must not fail the run: same rule as
+        // a report that cannot be written.
+        console.warn(`Warning: could not clean the report folder: ${err.message}`);
+      }
+    }
     if (config.contractReportPath) {
       console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
     }
@@ -650,6 +669,7 @@ export async function runTests(options = {}) {
     await browser.close();
 
     const reportPath = emitReport({
+      endedAt,
       notRun,
       recordingFailed,
       recording: recordingInfo,
