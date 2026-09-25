@@ -12,20 +12,16 @@ import { report } from "./reportFixtures.js";
 // reach the run would fail on exit code alone, since there is no dev server.
 const BIN = fileURLToPath(new URL("../bin/twd-cli.js", import.meta.url));
 
-function cli(...args) {
-  return new Promise((resolve) => {
-    execFile(process.execPath, [BIN, ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
-      resolve({ code: error ? error.code : 0, stdout, stderr });
-    });
-  });
-}
-
-function cliIn(cwd, ...args) {
+function runCli(args, { cwd } = {}) {
   return new Promise((resolve) => {
     execFile(process.execPath, [BIN, ...args], { encoding: "utf8", cwd }, (error, stdout, stderr) => {
       resolve({ code: error ? error.code : 0, stdout, stderr });
     });
   });
+}
+
+function cli(...args) {
+  return runCli(args);
 }
 
 describe("twd-cli help", () => {
@@ -101,7 +97,7 @@ describe("twd-cli report", () => {
   it("renders the default report folder as markdown", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "twd-cli-report-"));
     writeReportFolder(path.join(cwd, ".twd/report"), report());
-    const { code, stdout, stderr } = await cliIn(cwd, "report");
+    const { code, stdout, stderr } = await runCli(["report"], { cwd });
     expect(code).toBe(0);
     expect(stderr).toBe("");
     expect(stdout).toMatch(/### ✅ TWD: 3 passed/);
@@ -110,7 +106,7 @@ describe("twd-cli report", () => {
 
   it("exits 1 on stderr when there is no report", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "twd-cli-report-"));
-    const { code, stdout, stderr } = await cliIn(cwd, "report");
+    const { code, stdout, stderr } = await runCli(["report"], { cwd });
     expect(code).toBe(1);
     expect(stdout).toBe("");
     expect(stderr).toMatch(/No report found/);
