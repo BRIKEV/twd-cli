@@ -136,7 +136,12 @@ export function runMerge({ dir, out = null } = {}) {
     } else {
       const nycDir = path.resolve(workingDir, config.nycOutputDir);
       fs.mkdirSync(nycDir, { recursive: true });
-      fs.writeFileSync(path.join(nycDir, 'out.json'), JSON.stringify(mergeCoverage(coverages)));
+      const coveragePath = path.join(nycDir, 'out.json');
+      fs.writeFileSync(coveragePath, JSON.stringify(mergeCoverage(coverages)));
+      // Set on the report before writeReportFolder below, same as a single
+      // run's coverage field — otherwise the merged run.json always reads
+      // coverage: null even though .nyc_output/out.json exists on disk.
+      merged.coverage = { file: path.relative(outDir, coveragePath).split(path.sep).join('/') };
       console.log(
         `Coverage merged from ${contributors}/${found.length} shards to ` +
         `${config.nycOutputDir}/out.json`

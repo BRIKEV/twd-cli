@@ -160,6 +160,11 @@ export async function runTests(options = {}) {
 
   try {
     config = loadConfig();
+    // Cleared here, before anything else can crash the run (the ffmpeg probe,
+    // loadContracts, puppeteer.launch, a bad --changed-since ref): nothing
+    // writes a capture before navigation, so a PASSED zero-test report can
+    // never show a stale ".failed.png" from an earlier run.
+    clearFailureCaptures(path.resolve(workingDir, config.snapshotDir));
     // A sharded run always writes its report: merge needs every shard's
     // artifact to explain a gap, so --no-report / "report": false are ignored
     // (with a warning) rather than silently leaving a hole merge cannot diagnose.
@@ -265,10 +270,6 @@ export async function runTests(options = {}) {
       if (flags.ci) window.__TWD_SNAPSHOT_CI__ = true;
     }, { update: updateSnapshots, ci });
 
-    // Drop captures from earlier runs before this one can add its own, so the
-    // report cannot show a failure that has since been fixed.
-    clearFailureCaptures(path.resolve(workingDir, config.snapshotDir));
-
     // Navigate to your development server
     startedAt = Date.now();
     console.log(`Navigating to ${config.url} ...`);
@@ -293,6 +294,12 @@ export async function runTests(options = {}) {
       }));
     });
     partialHandlers = registeredHandlers;
+
+    // The full discovered order, before any filtering. Computed here, ahead of
+    // the filter branch below, so a "no tests matched" report emitted from
+    // inside that branch still shows the real discovery.totalTests instead of
+    // the empty initial value.
+    allTestIds = orderedTestIds(registeredHandlers);
 
     // Resolve filters to a concrete set of test ids (null = run all). Typed
     // --test filters and computed --changed-since titles are one set: filters
@@ -339,12 +346,12 @@ export async function runTests(options = {}) {
 
     // Resolve the ordered id list to run: the filter result, or all tests.
     //
-    // allTestIds is the full ordered list, before filtering or slicing. Its
-    // order is what the fingerprint covers (as paths — the ids themselves are
-    // random per page load) and its length is discovery.totalTests, so every
-    // shard agrees on both regardless of which slice it took. filteredIds is
-    // the list the shards divide, so it is what executed + notRun must total.
-    allTestIds = orderedTestIds(registeredHandlers);
+    // allTestIds (computed above) is the full ordered list, before filtering or
+    // slicing. Its order is what the fingerprint covers (as paths — the ids
+    // themselves are random per page load) and its length is
+    // discovery.totalTests, so every shard agrees on both regardless of which
+    // slice it took. filteredIds is the list the shards divide, so it is what
+    // executed + notRun must total.
     filteredIds = selectedIds ?? allTestIds;
     const baseIds = sharded
       ? selectShardIds(filteredIds, shard.index, shard.total)

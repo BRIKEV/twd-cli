@@ -25,6 +25,10 @@ vi.mock('../src/contractReport.js', () => ({
 vi.mock('../src/changedTests.js', () => ({
   resolveChangedTitles: vi.fn(),
 }));
+vi.mock('../src/snapshotReport.js', () => ({
+  clearFailureCaptures: vi.fn(),
+  listFailureCaptures: vi.fn(() => []),
+}));
 // The two ffmpeg-spawning helpers are mocked so no test needs a real binary.
 // The two hold helpers are mocked so their call ordering is observable here;
 // their real behavior is covered in tests/recorder.test.js. watchRecorder and
@@ -47,6 +51,7 @@ import { loadConfig } from '../src/config.js';
 import { loadContracts, validateMocks } from '../src/contracts.js';
 import { printContractReport } from '../src/contractReport.js';
 import { resolveChangedTitles } from '../src/changedTests.js';
+import { clearFailureCaptures, listFailureCaptures } from '../src/snapshotReport.js';
 import { assertFfmpegCapable, transcodeForPlayback, holdOpeningFrame, holdFinalFrame } from '../src/recorder.js';
 
 // puppeteer's screencast returns a PassThrough fed by ffmpeg's stdout, and the
@@ -1829,6 +1834,9 @@ describe('runTests sharding', () => {
   it('cleans only owned entries before the run', async () => {
     const { handlers, testStatus } = fourTests();
     vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(createMockPage({ handlers, testStatus })));
+    // cleanReportDir only acts on a folder that already looks like a twd
+    // report (run.json present); simulate one left by an earlier run.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
 
     await runTests();
 
@@ -1844,6 +1852,9 @@ describe('runTests sharding', () => {
     const { handlers, testStatus } = fourTests();
     const page = createMockPage({ handlers, testStatus });
     vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    // Otherwise cleanReportDir sees no run.json and returns before ever
+    // calling rmSync, and this test would exercise nothing.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
     vi.mocked(fs.rmSync).mockImplementation(() => {
       const err = new Error('EPERM: operation not permitted');
       err.code = 'EPERM';
@@ -2047,6 +2058,9 @@ describe('runTests sharding', () => {
     expect(await runTests({ testFilters: ['nope'] })).toBe(true);
     expect(runJson().outcome).toBe('interrupted');
     expect(runJson().error.message).toContain('No tests matched filter(s): "nope"');
+    // allTestIds has to be resolved before this early return, not after it, or
+    // discovery.totalTests reads 0 on a suite that plainly registered 4 tests.
+    expect(runJson().discovery.totalTests).toBe(4);
   });
 
   it('writes a passed empty report when no tests changed', async () => {
@@ -2342,6 +2356,8 @@ describe("runTests --changed-since", () => {
     vi.clearAllMocks();
     vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
     vi.mocked(resolveChangedTitles).mockReset();
+    vi.mocked(clearFailureCaptures).mockReset();
+    vi.mocked(listFailureCaptures).mockReset().mockReturnValue([]);
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -2391,6 +2407,26 @@ describe("runTests --changed-since", () => {
     expect(logs).toMatch(/origin\/main/);
   });
 
+  // A leftover ".failed.png" from an earlier run must not leak into a report
+  // this run never wrote a capture for. listFailureCaptures below stands in
+  // for the real directory listing: it "sees" the stale capture only until
+  // clearFailureCaptures has run, exactly as the real filesystem would.
+  it("clears stale snapshot captures before a zero-match report, not just before navigation", async () => {
+    vi.mocked(resolveChangedTitles).mockReturnValue({ titles: [], files: [], base: 'b' });
+    vi.mocked(listFailureCaptures).mockImplementation(() =>
+      (vi.mocked(clearFailureCaptures).mock.calls.length > 0
+        ? []
+        : [{ name: 'stale', path: '/x/stale.failed.png' }])
+    );
+
+    await runTests({ changedSince: 'origin/main' });
+
+    expect(clearFailureCaptures).toHaveBeenCalled();
+    const call = vi.mocked(fs.writeFileSync).mock.calls.find(([f]) => String(f).endsWith('run.json'));
+    const report = JSON.parse(String(call[1]));
+    expect(report.snapshots).toEqual([]);
+  });
+
   it("exits 0 when the changed titles match no registered test", async () => {
     vi.mocked(resolveChangedTitles).mockReturnValue({
       titles: ['a test that is not registered'],
@@ -2400,6 +2436,12 @@ describe("runTests --changed-since", () => {
     puppeteer.launch.mockResolvedValue(createMockBrowser(pageWith([])));
 
     await expect(runTests({ changedSince: 'origin/main' })).resolves.toBe(false);
+
+    // allTestIds has to be resolved before this early return, not after it, or
+    // discovery.totalTests reads 0 on a suite that plainly registered 3 tests.
+    const call = vi.mocked(fs.writeFileSync).mock.calls.find(([f]) => String(f).endsWith('run.json'));
+    const report = JSON.parse(String(call[1]));
+    expect(report.discovery.totalTests).toBe(3);
   });
 
   it("runs the union of --changed-since and --test", async () => {

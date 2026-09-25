@@ -66,6 +66,36 @@ describe('renderHtml', () => {
     expect(html).toContain('Is your dev server running?');
   });
 
+  it('preserves line breaks in the interrupted diagnostic without coloring it as an error', () => {
+    const html = renderHtml(report({
+      tests: [], executed: 0,
+      error: { message: 'boom', diagnostic: 'Line one\nLine two' },
+    }));
+    expect(html).toContain('<div class="diag">Line one\nLine two</div>');
+    expect(html).toContain('.diag { white-space:pre-wrap');
+  });
+
+  it('escapes outcome and every summary value from an untrusted run.json', () => {
+    const malicious = {
+      outcome: '"><script>alert(1)</script>',
+      summary: {
+        passed: '"><img src=x onerror=alert(2)>', failed: 0, skipped: 0, notRun: 0,
+        contracts: { passed: 0, errors: '"><b>x</b>', warnings: 0, skipped: 0 },
+      },
+      run: { url: 'http://x', startedAt: 't', durationMs: 0 },
+      error: null,
+      tests: [],
+      snapshots: [],
+      recordings: [],
+      contracts: { configured: true, results: [], skipped: [] },
+      coverage: null,
+    };
+    const html = renderHtml(malicious);
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<img src=x onerror=alert(2)>');
+    expect(html).not.toContain('<b>x</b>');
+  });
+
   it('lists every test in the collapsed section', () => {
     const html = renderHtml(report());
     expect(html).toContain('All tests (3)');

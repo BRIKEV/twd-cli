@@ -32,19 +32,23 @@ summary { cursor:pointer; font-weight:600; }
 ul.rows { list-style:none; margin:8px 0 0; padding:0; }
 ul.rows li { display:flex; gap:8px; padding:2px 0; overflow-wrap:anywhere; }
 .pass { color:var(--green); } .fail { color:var(--red); } .skip, .muted { color:var(--muted); } .warn { color:var(--amber); }
+.diag { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:6px; }
 `;
 
 function verdict(report) {
   const { summary, run, outcome } = report;
+  // A saved run.json is user-editable disk content, read back by `twd-cli
+  // report` without re-deriving it, so outcome and every summary value are
+  // escaped like any other field from it — not just the strings.
   const stats = [
-    `<span><b>${summary.passed}</b> passed</span>`,
-    `<span><b>${summary.failed}</b> failed</span>`,
-    `<span><b>${summary.skipped}</b> skipped</span>`,
+    `<span><b>${esc(summary.passed)}</b> passed</span>`,
+    `<span><b>${esc(summary.failed)}</b> failed</span>`,
+    `<span><b>${esc(summary.skipped)}</b> skipped</span>`,
   ];
-  if (summary.notRun) stats.push(`<span><b>${summary.notRun}</b> not run</span>`);
-  if (report.contracts.configured) stats.push(`<span><b>${summary.contracts.errors}</b> contract errors</span>`);
-  stats.push(`<span class="muted">${(run.durationMs / 1000).toFixed(1)}s · ${esc(run.url)} · ${esc(run.startedAt)}</span>`);
-  return `<div class="verdict"><span class="badge ${outcome}">${outcome.toUpperCase()}</span><div class="stats">${stats.join('')}</div></div>`;
+  if (summary.notRun) stats.push(`<span><b>${esc(summary.notRun)}</b> not run</span>`);
+  if (report.contracts.configured) stats.push(`<span><b>${esc(summary.contracts.errors)}</b> contract errors</span>`);
+  stats.push(`<span class="muted">${esc((run.durationMs / 1000).toFixed(1))}s · ${esc(run.url)} · ${esc(run.startedAt)}</span>`);
+  return `<div class="verdict"><span class="badge ${esc(outcome)}">${esc(String(outcome).toUpperCase())}</span><div class="stats">${stats.join('')}</div></div>`;
 }
 
 function image(file, images) {
@@ -109,7 +113,7 @@ function contracts(report) {
     warningRows += `<li class="muted">Skipped</li>${skipped.join('')}`;
   }
 
-  return `<details><summary>Contracts: ${c.passed} passed · ${plural(c.errors, 'error')} · ${plural(c.warnings, 'warning')} · ${c.skipped} skipped</summary>`
+  return `<details><summary>Contracts: ${esc(c.passed)} passed · ${esc(plural(c.errors, 'error'))} · ${esc(plural(c.warnings, 'warning'))} · ${esc(c.skipped)} skipped</summary>`
     + `<ul class="rows">${warningRows}</ul></details>`;
 }
 
@@ -125,8 +129,11 @@ export function renderHtml(report, { images = {} } = {}) {
   let body = verdict(report);
 
   if (report.outcome === 'interrupted') {
+    // The diagnostic is prose, not a stack trace, so it gets its own class
+    // rather than <pre>'s red: white-space:pre-wrap keeps its line breaks
+    // without borrowing the error's color.
     body += `<h2>Run interrupted</h2><div class="item"><pre>${esc(report.error.message)}</pre>`
-      + (report.error.diagnostic ? `<div>${esc(report.error.diagnostic)}</div>` : '') + '</div>';
+      + (report.error.diagnostic ? `<div class="diag">${esc(report.error.diagnostic)}</div>` : '') + '</div>';
   }
   if (items.length) {
     body += `<h2>Needs attention (${items.length})</h2>${items.map((e) => item(e, images)).join('')}`;

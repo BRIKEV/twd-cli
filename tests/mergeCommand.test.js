@@ -179,6 +179,25 @@ describe('runMerge', () => {
     expect(writtenFiles().some((f) => f.includes('.nyc_output'))).toBe(false);
   });
 
+  it('records where merged coverage was written in the report', () => {
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: shardReport(1) },
+      { dir: 'b', report: shardReport(2) },
+    ]);
+    vi.mocked(readShardCoverage).mockReturnValue({});
+
+    runMerge({ dir: '.twd/shards' });
+
+    const call = vi.mocked(fs.writeFileSync).mock.calls
+      .find(([f]) => String(f).endsWith('run.json'));
+    const merged = JSON.parse(String(call[1]));
+    const expectedFile = path.relative(
+      path.resolve('./.twd/report'),
+      path.resolve('./.nyc_output', 'out.json')
+    ).split(path.sep).join('/');
+    expect(merged.coverage).toEqual({ file: expectedFile });
+  });
+
   it('reports how many shards contributed coverage', () => {
     const log = vi.spyOn(console, 'log');
     vi.mocked(readShardReports).mockReturnValue([

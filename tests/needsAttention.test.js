@@ -23,10 +23,19 @@ describe('needsAttention', () => {
 
   it('attaches a snapshot capture to the test whose error names it', () => {
     const [item] = needsAttention(report({
-      tests: [{ id: 't3', status: 'fail', error: 'Layout snapshot "invoice-form" differs' }],
+      tests: [{ id: 't3', status: 'fail', error: 'Layout snapshot "invoice-form" changed - Capture: __twd_snapshots__/invoice-form.failed.png' }],
       snapshots: [{ name: 'invoice-form', file: 'snapshots/invoice-form.failed.png' }],
     }));
     expect(item.snapshot).toEqual({ name: 'invoice-form', file: 'snapshots/invoice-form.failed.png' });
+  });
+
+  // A bare substring match on a short name would pair with almost any error.
+  it('does not pair a short snapshot name against an unrelated error', () => {
+    const [item] = needsAttention(report({
+      tests: [{ id: 't3', status: 'fail', error: 'assertion failed: expected true' }],
+      snapshots: [{ name: 'a', file: 'snapshots/a.failed.png' }],
+    }));
+    expect(item.snapshot).toBeNull();
   });
 
   it('lists an unmatched snapshot capture as its own entry', () => {

@@ -42,10 +42,19 @@ describe('cleanReportDir', () => {
   });
 
   it('removes shard-* folders a previous merge left', () => {
+    touch('run.json'); // a previous merge always writes one alongside shard-*
     touch('shard-2/recordings/a.mp4');
     touch('shared/keep.txt');
     cleanReportDir(root);
-    expect(fs.readdirSync(root)).toEqual(['shared']);
+    expect(fs.readdirSync(root).sort()).toEqual(['shared']);
+  });
+
+  it('keeps a folder that has never held a twd report, even if it has files with owned names', () => {
+    touch('index.html', 'my own page');
+    touch('summary.md', 'my own notes');
+    cleanReportDir(root);
+    expect(fs.readFileSync(path.join(root, 'index.html'), 'utf8')).toBe('my own page');
+    expect(fs.readFileSync(path.join(root, 'summary.md'), 'utf8')).toBe('my own notes');
   });
 });
 

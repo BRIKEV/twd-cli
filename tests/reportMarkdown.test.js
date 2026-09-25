@@ -36,7 +36,7 @@ describe('renderMarkdown', () => {
 
   it('attaches snapshot line to test when error names a snapshot', () => {
     const md = renderMarkdown(report({
-      tests: [{ id: 't1', status: 'fail', error: 'Layout snapshot "invoice-form" differs' }],
+      tests: [{ id: 't1', status: 'fail', error: 'Layout snapshot "invoice-form" changed - Capture: __twd_snapshots__/invoice-form.failed.png' }],
       snapshots: [{ name: 'invoice-form', file: 'snapshots/invoice-form.failed.png' }],
     }));
     expect(md).toContain('- ❌ **Invoices › shows empty state** _(3 attempts)_');
@@ -99,6 +99,25 @@ describe('renderMarkdown', () => {
     expect(md).toMatch(/^### ⚠️ TWD: run interrupted$/m);
     expect(md).toContain('net::ERR_CONNECTION_REFUSED');
     expect(md).toContain('Is your dev server running?');
+  });
+
+  it('fences an interrupted error safely when the message itself contains a backtick run', () => {
+    const md = renderMarkdown(report({
+      tests: [], executed: 0,
+      error: { message: 'boom ```danger``` end', diagnostic: null },
+    }));
+    const fenceLines = md.split('\n').filter((l) => /^`{3,}$/.test(l));
+    expect(fenceLines).toHaveLength(2);
+    expect(fenceLines[0]).toBe('````');
+    expect(fenceLines[0]).toBe(fenceLines[1]);
+    expect(md).toContain('boom ```danger``` end');
+  });
+
+  it('renders a contract failure with no detail line when validation reported no errors', () => {
+    const md = renderMarkdown(report({
+      contracts: { results: [contractResult({ validation: { valid: false, errors: [], warnings: [] } })] },
+    }));
+    expect(md).toContain('- ❌ **Contract** `GET /invoices 200` (getInvoices), openapi.json');
   });
 
   it('says when the run stopped early', () => {

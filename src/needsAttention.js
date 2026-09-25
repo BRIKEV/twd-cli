@@ -19,7 +19,11 @@ export function needsAttention(report) {
   const failed = report.tests.filter((t) => t.status === 'fail').sort(byRunOrder);
 
   const items = failed.map((test) => {
-    const at = snapshots.findIndex((s) => String(test.error ?? '').includes(s.name));
+    // A bare substring match on the name pairs a short one (e.g. "a") with any
+    // unrelated error that happens to contain that letter. twd-js's own
+    // failure message always names the capture file as `<name>.failed.png`,
+    // so match that exact form instead.
+    const at = snapshots.findIndex((s) => String(test.error ?? '').includes(`${s.name}.failed.png`));
     const snapshot = at === -1 ? null : snapshots.splice(at, 1)[0];
     return {
       kind: 'test',

@@ -15,6 +15,15 @@ function firstLine(text) {
   return line.length > LINE_CAP ? `${line.slice(0, LINE_CAP)}…` : line;
 }
 
+// A fence no longer than the text's own longest backtick run would close
+// early if the error message itself contains one (a code block in a stack
+// trace, say). One backtick longer than the longest run guarantees it can't.
+function fenceFor(text) {
+  const runs = String(text ?? '').match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
 function heading(report) {
   const { summary, outcome } = report;
   if (outcome === 'interrupted') return '### ⚠️ TWD: run interrupted';
@@ -50,19 +59,24 @@ function item(entry) {
   if (entry.kind === 'snapshot') {
     return [`- ❌ **Layout snapshot** ${code(entry.name)} differs, diff in the report`];
   }
-  const [err] = entry.errors;
+  const [err] = entry.errors ?? [];
   const usedBy = entry.testName ? ` Used by _${escapeMd(pretty(entry.testName))}_` : '';
-  return [
+  const lines = [
     `- ❌ **Contract** ${code(`${entry.method} ${entry.matchedPath} ${entry.status}`)} (${escapeMd(entry.alias)}), ${escapeMd(entry.spec)}`,
-    `  > ${code(err.path)}: ${escapeMd(firstLine(err.message))}.${usedBy}`,
   ];
+  // needsAttention only guarantees mode + validity, not that errors[] is
+  // non-empty, so a validation shaped without one still gets a contract line.
+  if (err) lines.push(`  > ${code(err.path)}: ${escapeMd(firstLine(err.message))}.${usedBy}`);
+  return lines;
 }
 
 export function renderMarkdown(report) {
   const lines = [heading(report), ''];
 
   if (report.outcome === 'interrupted') {
-    lines.push('```', firstLine(report.error.message), '```');
+    const message = firstLine(report.error.message);
+    const fence = fenceFor(message);
+    lines.push(fence, message, fence);
     if (report.error.diagnostic) lines.push('', escapeMd(report.error.diagnostic));
     lines.push('');
   }

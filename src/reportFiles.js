@@ -17,12 +17,22 @@ const toPosix = (p) => p.split(path.sep).join('/');
 
 // report.dir may be a folder the user cares about: never remove anything we did not create.
 export function cleanReportDir(dir) {
-  const entries = [...OWNED_ENTRIES];
+  let names;
   try {
-    for (const name of fs.readdirSync(dir) ?? []) if (/^shard-\d+$/.test(name)) entries.push(name);
+    // An auto-mocked fs (vi.mock('fs') in the test suite) returns undefined
+    // rather than throwing or returning an array; treat that the same as an
+    // empty directory instead of crashing on .includes below.
+    names = fs.readdirSync(dir) ?? [];
   } catch {
     return;
   }
+  // A folder this tool has never written a report into is not ours to clean,
+  // even if it happens to hold files with the same names (a user's own
+  // index.html, say). run.json is the marker that it has been a twd report
+  // folder before.
+  if (!names.includes(RUN_REPORT_FILE)) return;
+  const entries = [...OWNED_ENTRIES];
+  for (const name of names) if (/^shard-\d+$/.test(name)) entries.push(name);
   for (const name of entries) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
 }
 
