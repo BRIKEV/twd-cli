@@ -44,8 +44,8 @@ export function runMerge({ dir, out = null } = {}) {
     );
   }
 
-  // readShardReports returns readdir order, so twd-run-10 sorts before
-  // twd-run-2. mergeRunReports sorts shards[] by index but concatenates tests
+  // readShardReports returns readdir order, so twd-report-10 sorts before
+  // twd-report-2. mergeRunReports sorts shards[] by index but concatenates tests
   // in argument order, so without this the merged report's tests and its shard
   // list disagree about ordering.
   found.sort((a, b) => (a.report.shards[0]?.index ?? 0) - (b.report.shards[0]?.index ?? 0));

@@ -22,14 +22,13 @@ inputs:
     required: false
     default: ''
   report-dir:
-    description: 'Where the shard report is written. Only used when `shard` is set.'
+    description: 'Where the run report folder is written.'
     required: false
-    default: '.twd/run'
+    default: '.twd/report'
   upload-report:
     description: >-
-      Upload the shard report as an artifact named `twd-run-<index>`, which is
-      the layout `twd-cli merge` expects after actions/download-artifact. Only
-      used when `shard` is set.
+      Upload the report folder as an artifact named twd-report
+      (twd-report-<index> for a shard, the layout twd-cli merge expects).
     required: false
     default: 'true'
 
@@ -77,19 +76,28 @@ runs:
         if [ -n "$SHARD" ]; then
           npx twd-cli run --shard "$SHARD" --report-dir "$REPORT_DIR"
         else
-          npx twd-cli run
+          npx twd-cli run --report-dir "$REPORT_DIR"
         fi
 
-    - name: Upload shard report
-      # always(): a red shard must still upload, or `merge` cannot tell "this
-      # shard failed" from "this shard never ran", and it reports the gap as a
-      # missing artifact instead of the real failure.
-      if: always() && inputs.shard != '' && inputs.upload-report == 'true'
+    - name: Write job summary
+      # The merge job writes the summary for a sharded run.
+      if: always() && inputs.shard == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: |
+        npx twd-cli report "$REPORT_DIR" --format markdown >> "$GITHUB_STEP_SUMMARY" \
+          || echo "::warning::No TWD report to summarise in $REPORT_DIR"
+
+    - name: Upload report
+      # always(): a red run must still surface its report.
+      if: always() && inputs.upload-report == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: twd-run-${{ steps.shard.outputs.index }}
+        name: ${{ steps.shard.outputs.index != '' && format('twd-report-{0}', steps.shard.outputs.index) || 'twd-report' }}
         path: ${{ inputs.working-directory }}/${{ inputs.report-dir }}
-        if-no-files-found: error
+        if-no-files-found: ${{ inputs.shard != '' && 'error' || 'warn' }}
 
     - name: Post contract report to PR
       if: inputs.contract-report == 'true' && github.event_name == 'pull_request'
@@ -100,6 +108,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         SHARD: ${{ inputs.shard }}
+        REPORT_DIR: ${{ inputs.report-dir }}
       run: |
         # A sharded run deliberately writes no contract markdown: every shard
         # would overwrite the others with a fraction of the mocks. `twd-cli
@@ -109,22 +118,16 @@ runs:
           exit 0
         fi
 
-        REPORT_PATH=$(node -e "
-          const fs = require('fs');
-          try {
-            const config = JSON.parse(fs.readFileSync('twd.config.json', 'utf-8'));
-            if (config.contractReportPath) console.log(config.contractReportPath);
-          } catch {}
-        ")
-
-        if [ -z "$REPORT_PATH" ] || [ ! -f "$REPORT_PATH" ]; then
-          echo "No contract report found — skipping PR comment"
+        REPORT_PATH="$REPORT_DIR/summary.md"
+        if [ ! -f "$REPORT_PATH" ]; then
+          echo "No report summary found — skipping PR comment"
           exit 0
         fi
+        BODY=$(mktemp)
+        cp "$REPORT_PATH" "$BODY"
+        echo "" >> "$BODY"
+        echo "[View full report →](${RUN_URL})" >> "$BODY"
 
-        echo "" >> "$REPORT_PATH"
-        echo "[View full report →](${RUN_URL})" >> "$REPORT_PATH"
-
-        if ! gh pr comment "${PR_NUMBER}" --body-file "$REPORT_PATH" 2>/dev/null; then
+        if ! gh pr comment "${PR_NUMBER}" --body-file "$BODY" 2>/dev/null; then
           echo "::warning::Could not post contract report to PR. Ensure the workflow has 'pull-requests: write' permission."
         fi
