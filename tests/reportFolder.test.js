@@ -6,6 +6,7 @@ import {
   cleanReportDir, copySnapshotCaptures, loadSnapshotImages, writeReportFolder,
   readReport, rebaseShardArtifacts, DEFAULT_REPORT_DIR,
 } from '../src/reportFiles.js';
+import { runMerge } from '../src/mergeCommand.js';
 import { report } from './reportFixtures.js';
 
 let root;
@@ -130,5 +131,20 @@ describe('rebaseShardArtifacts', () => {
     expect(rebased.shards[0].recordings[0].file).toBe('shard-1/recordings/run.mp4');
     expect(rebased.snapshots[0].file).toBe('shard-1/snapshots/f.failed.png');
     expect(fs.existsSync(path.join(out, 'shard-1/recordings/run.mp4'))).toBe(true);
+  });
+});
+
+describe('runMerge into its own input folder', () => {
+  it('reads before it cleans, so merging .twd/report onto itself works', () => {
+    const shardReport = report();
+    writeReportFolder(root, shardReport);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      runMerge({ dir: '.', out: '.' });
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'run.json'), 'utf8')).tests).toHaveLength(3);
   });
 });

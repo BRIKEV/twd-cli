@@ -2,9 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { loadConfig } from './config.js';
 import {
-  readShardReports,
-  readShardCoverage,
-  DEFAULT_MERGED_OUT,
+  readShardReports, readShardCoverage, cleanReportDir, writeReportFolder,
+  rebaseShardArtifacts, DEFAULT_REPORT_DIR, HTML_FILE,
 } from './reportFiles.js';
 import {
   mergeRunReports,
@@ -46,7 +45,22 @@ export function runMerge({ dir, out = null } = {}) {
   // list disagree about ordering.
   found.sort((a, b) => (a.report.shards[0]?.index ?? 0) - (b.report.shards[0]?.index ?? 0));
 
-  const merged = mergeRunReports(found.map((f) => f.report));
+  // A shard that never finished has no results worth merging, and its own error
+  // explains the whole run better than a downstream "missing shard" message would.
+  const interrupted = found.find((f) => f.report.outcome === 'interrupted');
+  if (interrupted) {
+    const s = interrupted.report.shards[0];
+    throw new Error(
+      `Shard ${s.index}/${s.total} was interrupted: ${interrupted.report.error?.message ?? 'unknown error'}. ` +
+      'Its results are partial, so the run cannot be merged. Fix that shard and re-run it.'
+    );
+  }
+
+  const outDir = path.resolve(workingDir, out ?? DEFAULT_REPORT_DIR);
+  // Read everything before cleaning: out may be the folder the shards were read from.
+  const coverages = found.map((f) => readShardCoverage(f.dir, f.report.shards[0]?.coverageFile ?? null));
+  const rebased = found.map((f) => rebaseShardArtifacts(f.report, f.dir, `${outDir}.tmp-merge`, `shard-${f.report.shards[0].index}`));
+  const merged = mergeRunReports(rebased);
 
   // Completeness is enforced here rather than inside mergeRunReports, which must
   // stay associative. A gap is never a warning: a silent 3-of-4 merge reads as a
@@ -61,12 +75,16 @@ export function runMerge({ dir, out = null } = {}) {
     );
   }
 
-  const outPath = path.resolve(workingDir, out ?? DEFAULT_MERGED_OUT);
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, `${JSON.stringify(merged, null, 2)}\n`);
-  console.log(`Merged report written to ${outPath}`);
+  cleanReportDir(outDir);
+  fs.mkdirSync(outDir, { recursive: true });
+  // Staged in a sibling folder: cleaning outDir could otherwise delete the very
+  // shard files being copied, when out is the folder the shards were read from.
+  if (fs.existsSync(`${outDir}.tmp-merge`)) {
+    fs.cpSync(`${outDir}.tmp-merge`, outDir, { recursive: true, force: true });
+    fs.rmSync(`${outDir}.tmp-merge`, { recursive: true, force: true });
+  }
 
-  let hasFailures = merged.tests.some((test) => test.status === 'fail');
+  let hasFailures = merged.outcome !== 'passed';
 
   if (merged.contracts.configured) {
     const validationOutput = {
@@ -83,9 +101,10 @@ export function runMerge({ dir, out = null } = {}) {
       );
     }
     if (config.contractReportPath) {
-      const reportPath = path.resolve(workingDir, config.contractReportPath);
-      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-      fs.writeFileSync(reportPath, generateContractMarkdown(validationOutput));
+      console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
+      const contractPath = path.resolve(workingDir, config.contractReportPath);
+      fs.mkdirSync(path.dirname(contractPath), { recursive: true });
+      fs.writeFileSync(contractPath, generateContractMarkdown(validationOutput));
       console.log(`Contract report written to ${config.contractReportPath}`);
     }
   }
@@ -93,9 +112,6 @@ export function runMerge({ dir, out = null } = {}) {
   // A red run yields no coverage — the same policy a single run has always had,
   // but keyed on the whole merged result instead of one shard's.
   if (config.coverage) {
-    const coverages = found.map((f) =>
-      readShardCoverage(f.dir, f.report.shards[0]?.coverageFile ?? null)
-    );
     const contributors = coverages.filter(Boolean).length;
 
     if (contributors === 0) {
@@ -126,6 +142,15 @@ export function runMerge({ dir, out = null } = {}) {
   }
 
   const timings = reportTimings(merged);
+
+  let reportPath = null;
+  try {
+    writeReportFolder(outDir, merged, { formats: ['html', 'markdown'] });
+    reportPath = path.relative(workingDir, path.join(outDir, HTML_FILE)).split(path.sep).join('/');
+  } catch (err) {
+    console.warn(`Warning: could not write the merged report: ${err.message}`);
+  }
+
   console.log('');
   console.log(formatRunComplete({
     testStatus: merged.tests,
@@ -136,6 +161,7 @@ export function runMerge({ dir, out = null } = {}) {
     shards: merged.shards,
     stoppedEarly: merged.shards.some((s) => s.stoppedEarly),
     maxFailures: config.maxFailures,
+    reportPath,
   }));
 
   return hasFailures;

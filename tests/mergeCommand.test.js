@@ -9,6 +9,7 @@ vi.mock('../src/reportFiles.js', async (importOriginal) => {
 });
 
 import fs from 'fs';
+import path from 'path';
 import { loadConfig } from '../src/config.js';
 import { printContractReport } from '../src/contractReport.js';
 import { readShardReports, readShardCoverage } from '../src/reportFiles.js';
@@ -34,6 +35,10 @@ function shardReport(index, overrides = {}) {
   } = overrides;
   return {
     schemaVersion: REPORT_SCHEMA_VERSION,
+    run: { twdCliVersion: '1.10.0', url: 'http://localhost:5173' },
+    error: null,
+    outcome: 'passed',
+    snapshots: [],
     shards: [{
       index, total,
       startedAt: `2026-08-19T10:00:0${index}.000Z`,
@@ -41,6 +46,7 @@ function shardReport(index, overrides = {}) {
       durationMs: 10_000,
       executed: 1, notRun: 0, failed,
       stoppedEarly: false, coverageFile: 'coverage.json', recording: null,
+      recordingFailed: false,
     }],
     discovery: { totalTests: 2, fingerprint: 'sha256:same' },
     selection: { filters: [], selectedTests },
@@ -102,8 +108,11 @@ describe('runMerge', () => {
 
     expect(runMerge({ dir: '.twd/shards' })).toBe(false);
 
-    const merged = writtenFiles().find((f) => f.endsWith('merged-run.json'));
-    expect(merged).toBeDefined();
+    const dir = path.resolve('./.twd/report');
+    const written = writtenFiles();
+    expect(written).toContain(path.join(dir, 'run.json'));
+    expect(written).toContain(path.join(dir, 'index.html'));
+    expect(written).toContain(path.join(dir, 'summary.md'));
   });
 
   it('honors --out', () => {
@@ -112,9 +121,9 @@ describe('runMerge', () => {
       { dir: 'b', report: shardReport(2) },
     ]);
 
-    runMerge({ dir: '.twd/shards', out: 'custom.json' });
+    runMerge({ dir: '.twd/shards', out: 'custom' });
 
-    expect(writtenFiles().some((f) => f.endsWith('custom.json'))).toBe(true);
+    expect(writtenFiles()).toContain(path.resolve('custom', 'run.json'));
   });
 
   // readShardReports returns readdir order, which is lexicographic, so
@@ -130,7 +139,7 @@ describe('runMerge', () => {
     runMerge({ dir: '.twd/shards' });
 
     const call = vi.mocked(fs.writeFileSync).mock.calls
-      .find(([f]) => String(f).endsWith('merged-run.json'));
+      .find(([f]) => String(f).endsWith('run.json'));
     const merged = JSON.parse(String(call[1]));
     expect(merged.tests.map((t) => t.index)).toEqual([0, 1]);
     expect(merged.shards.map((s) => s.index)).toEqual([1, 2]);
@@ -339,5 +348,23 @@ describe('runMerge', () => {
     const output = log.mock.calls.flat().join('\n');
     expect(output).toContain('✓ Login > b (passed on attempt 2)');
     expect(output).not.toContain('zzzflaky');
+  });
+
+  it('refuses an interrupted shard', () => {
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: shardReport(1) },
+      { dir: 'b', report: { ...shardReport(2), outcome: 'interrupted', error: { message: 'net::ERR_CONNECTION_REFUSED', diagnostic: null } } },
+    ]);
+    expect(() => runMerge({ dir: '.twd/shards' })).toThrow(/Shard 2\/2 was interrupted: net::ERR_CONNECTION_REFUSED/);
+  });
+
+  it('ends the run-complete block with the report path', () => {
+    vi.mocked(readShardReports).mockReturnValue([
+      { dir: 'a', report: shardReport(1) },
+      { dir: 'b', report: shardReport(2) },
+    ]);
+    runMerge({ dir: '.twd/shards' });
+    const block = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('--- Run complete'));
+    expect(block.split('\n').at(-1)).toBe('  Report: .twd/report/index.html');
   });
 });
