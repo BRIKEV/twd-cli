@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { writeReportFolder } from "../src/reportFiles.js";
+import { report } from "./reportFixtures.js";
 
 // These spawn the real bin. Every case below returns before the dynamic
 // import of src/index.js, so no browser is ever launched — a case that did
@@ -10,6 +15,14 @@ const BIN = fileURLToPath(new URL("../bin/twd-cli.js", import.meta.url));
 function cli(...args) {
   return new Promise((resolve) => {
     execFile(process.execPath, [BIN, ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
+      resolve({ code: error ? error.code : 0, stdout, stderr });
+    });
+  });
+}
+
+function cliIn(cwd, ...args) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [BIN, ...args], { encoding: "utf8", cwd }, (error, stdout, stderr) => {
       resolve({ code: error ? error.code : 0, stdout, stderr });
     });
   });
@@ -81,5 +94,37 @@ describe("twd-cli help", () => {
     expect(stderr).toMatch(/unknown command/i);
     expect(stderr).toMatch(/bogus/);
     expect(stderr).toMatch(/twd-cli run/);
+  });
+});
+
+describe("twd-cli report", () => {
+  it("renders the default report folder as markdown", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "twd-cli-report-"));
+    writeReportFolder(path.join(cwd, ".twd/report"), report());
+    const { code, stdout, stderr } = await cliIn(cwd, "report");
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/### ✅ TWD: 3 passed/);
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("exits 1 on stderr when there is no report", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "twd-cli-report-"));
+    const { code, stdout, stderr } = await cliIn(cwd, "report");
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/No report found/);
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("report --help prints report usage", async () => {
+    const { code, stdout } = await cli("report", "--help");
+    expect(code).toBe(0);
+    expect(stdout).toMatch(/--format/);
+  });
+
+  it("run --no-report is a known flag", async () => {
+    const { stdout } = await cli("run", "--help");
+    expect(stdout).toMatch(/--no-report/);
   });
 });
