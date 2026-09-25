@@ -1753,9 +1753,9 @@ describe('runTests sharding', () => {
 
     await runTests({ shard: { index: 2, total: 2 } });
 
-    expect(runJson().tests).toEqual([
-      { id: '2', status: 'pass', path: 'b', index: 1 },
-      { id: '4', status: 'pass', path: 'd', index: 3 },
+    expect(runJson().tests).toStrictEqual([
+      { id: '2', status: 'pass', path: 'b', index: 1, attempts: 1 },
+      { id: '4', status: 'pass', path: 'd', index: 3, attempts: 1 },
     ]);
   });
 
