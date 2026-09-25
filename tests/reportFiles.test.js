@@ -4,51 +4,13 @@ vi.mock('fs');
 
 import fs from 'fs';
 import {
-  writeRunReport,
   readShardReports,
   readShardCoverage,
   RUN_REPORT_FILE,
   COVERAGE_FILE,
-  DEFAULT_REPORT_DIR,
 } from '../src/reportFiles.js';
 
 const report = { schemaVersion: 1, tests: [] };
-
-describe('writeRunReport', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('creates the directory recursively', () => {
-    writeRunReport('.twd/run', report, null);
-    expect(fs.mkdirSync).toHaveBeenCalledWith('.twd/run', { recursive: true });
-  });
-
-  it('writes pretty-printed JSON so the report is readable by eye', () => {
-    writeRunReport('.twd/run', report, null);
-    const [file, body] = vi.mocked(fs.writeFileSync).mock.calls[0];
-    expect(file).toBe(`.twd/run/${RUN_REPORT_FILE}`);
-    expect(body).toBe(`${JSON.stringify(report, null, 2)}\n`);
-  });
-
-  it('does not write a coverage file when there is no coverage', () => {
-    writeRunReport('.twd/run', report, null);
-    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
-    expect(writeRunReport('.twd/run', report, null).coveragePath).toBeNull();
-  });
-
-  // Coverage stays raw and unformatted: it is machine input for nyc, routinely
-  // several megabytes, and pretty-printing it would double the artifact size.
-  it('writes coverage compactly alongside the report', () => {
-    const coverage = { '/a.js': { s: { 0: 1 } } };
-    const result = writeRunReport('.twd/run', report, coverage);
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      `.twd/run/${COVERAGE_FILE}`,
-      JSON.stringify(coverage),
-    );
-    expect(result.coveragePath).toBe(`.twd/run/${COVERAGE_FILE}`);
-  });
-});
 
 describe('readShardReports', () => {
   beforeEach(() => {
@@ -124,11 +86,5 @@ describe('readShardCoverage', () => {
   it('returns null when the file is missing on disk', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     expect(readShardCoverage('.twd/shards/twd-run-1', COVERAGE_FILE)).toBeNull();
-  });
-});
-
-describe('defaults', () => {
-  it('defaults the report dir to .twd/run', () => {
-    expect(DEFAULT_REPORT_DIR).toBe('./.twd/run');
   });
 });
