@@ -136,7 +136,8 @@ describe('rebaseShardArtifacts', () => {
 
 describe('runMerge into its own input folder', () => {
   it('reads before it cleans, so merging .twd/report onto itself works', () => {
-    const shardReport = report();
+    touch('snapshots/f.failed.png', 'p');
+    const shardReport = report({ snapshots: [{ name: 'f', file: 'snapshots/f.failed.png' }] });
     writeReportFolder(root, shardReport);
     const cwd = process.cwd();
     process.chdir(root);
@@ -146,5 +147,24 @@ describe('runMerge into its own input folder', () => {
       process.chdir(cwd);
     }
     expect(JSON.parse(fs.readFileSync(path.join(root, 'run.json'), 'utf8')).tests).toHaveLength(3);
+    expect(fs.existsSync(path.join(root, 'shard-1/snapshots/f.failed.png'))).toBe(true);
+    expect(fs.existsSync(`${root}.tmp-merge`)).toBe(false);
+  });
+
+  it('removes the sibling staging folder even when the merge throws', () => {
+    touch('snapshots/f.failed.png', 'p');
+    const shardReport = report({
+      shard: { index: 1, total: 2 },
+      snapshots: [{ name: 'f', file: 'snapshots/f.failed.png' }],
+    });
+    writeReportFolder(root, shardReport);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(() => runMerge({ dir: '.', out: '.' })).toThrow(/Missing shard report/);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(fs.existsSync(`${root}.tmp-merge`)).toBe(false);
   });
 });

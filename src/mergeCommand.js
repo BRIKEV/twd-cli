@@ -31,6 +31,11 @@ export function runMerge({ dir, out = null } = {}) {
   const config = loadConfig();
   const workingDir = process.cwd();
 
+  // Hoisted so it fires whenever the key is set, not only when contracts are configured.
+  if (config.contractReportPath) {
+    console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
+  }
+
   const found = readShardReports(dir);
   if (found.length === 0) {
     throw new Error(
@@ -45,8 +50,7 @@ export function runMerge({ dir, out = null } = {}) {
   // list disagree about ordering.
   found.sort((a, b) => (a.report.shards[0]?.index ?? 0) - (b.report.shards[0]?.index ?? 0));
 
-  // A shard that never finished has no results worth merging, and its own error
-  // explains the whole run better than a downstream "missing shard" message would.
+  // An interrupted shard's own error explains the run better than a "missing shard" message would.
   const interrupted = found.find((f) => f.report.outcome === 'interrupted');
   if (interrupted) {
     const s = interrupted.report.shards[0];
@@ -57,31 +61,40 @@ export function runMerge({ dir, out = null } = {}) {
   }
 
   const outDir = path.resolve(workingDir, out ?? DEFAULT_REPORT_DIR);
+  const staging = `${outDir}.tmp-merge`;
   // Read everything before cleaning: out may be the folder the shards were read from.
   const coverages = found.map((f) => readShardCoverage(f.dir, f.report.shards[0]?.coverageFile ?? null));
-  const rebased = found.map((f) => rebaseShardArtifacts(f.report, f.dir, `${outDir}.tmp-merge`, `shard-${f.report.shards[0].index}`));
-  const merged = mergeRunReports(rebased);
+  // A previous merge that threw after staging would otherwise leak into this one's outDir.
+  fs.rmSync(staging, { recursive: true, force: true });
 
-  // Completeness is enforced here rather than inside mergeRunReports, which must
-  // stay associative. A gap is never a warning: a silent 3-of-4 merge reads as a
-  // complete green run.
-  const missing = findMissingShards(merged);
-  if (missing.length > 0) {
-    const total = merged.shards[0].total;
-    throw new Error(
-      `Missing shard report(s): ${missing.map((i) => `${i}/${total}`).join(', ')}. ` +
-      'A shard job likely failed before uploading its artifact — check that the ' +
-      'upload step runs with `if: always()`.'
-    );
-  }
+  let merged;
+  try {
+    const rebased = found.map((f) => rebaseShardArtifacts(f.report, f.dir, staging, `shard-${f.report.shards[0].index}`));
+    merged = mergeRunReports(rebased);
 
-  cleanReportDir(outDir);
-  fs.mkdirSync(outDir, { recursive: true });
-  // Staged in a sibling folder: cleaning outDir could otherwise delete the very
-  // shard files being copied, when out is the folder the shards were read from.
-  if (fs.existsSync(`${outDir}.tmp-merge`)) {
-    fs.cpSync(`${outDir}.tmp-merge`, outDir, { recursive: true, force: true });
-    fs.rmSync(`${outDir}.tmp-merge`, { recursive: true, force: true });
+    // Completeness is enforced here rather than inside mergeRunReports, which must
+    // stay associative. A gap is never a warning: a silent 3-of-4 merge reads as a
+    // complete green run.
+    const missing = findMissingShards(merged);
+    if (missing.length > 0) {
+      const total = merged.shards[0].total;
+      throw new Error(
+        `Missing shard report(s): ${missing.map((i) => `${i}/${total}`).join(', ')}. ` +
+        'A shard job likely failed before uploading its artifact — check that the ' +
+        'upload step runs with `if: always()`.'
+      );
+    }
+
+    try {
+      cleanReportDir(outDir);
+      fs.mkdirSync(outDir, { recursive: true });
+      // Staged in a sibling folder: cleaning outDir could delete the shard files being copied.
+      if (fs.existsSync(staging)) fs.cpSync(staging, outDir, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(`Warning: could not write the merged report: ${err.message}`);
+    }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
   }
 
   let hasFailures = merged.outcome !== 'passed';
@@ -101,7 +114,6 @@ export function runMerge({ dir, out = null } = {}) {
       );
     }
     if (config.contractReportPath) {
-      console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
       const contractPath = path.resolve(workingDir, config.contractReportPath);
       fs.mkdirSync(path.dirname(contractPath), { recursive: true });
       fs.writeFileSync(contractPath, generateContractMarkdown(validationOutput));
