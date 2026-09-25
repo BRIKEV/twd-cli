@@ -130,9 +130,9 @@ runs:
       env:
         WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
-        # Same shape as the contract report lookup in the `run` action: the
-        # config is the source of truth, and the action only needs to know where
-        # to look afterwards.
+        # Same shape as the `run` action's "Resolve the report directory" step:
+        # the config is the source of truth, and the action only needs to know
+        # where to look afterwards.
         DIR=$(node -e "
           const fs = require('fs');
           const path = require('path');

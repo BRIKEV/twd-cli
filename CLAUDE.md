@@ -90,6 +90,7 @@ These are load-bearing and easy to undo by accident:
 These are load-bearing and easy to undo by accident:
 
 - **`cleanReportDir` removes only `OWNED_ENTRIES` and `shard-*`, never the directory itself.** `report.dir` may point at a user's own folder, so the clean step deletes exactly the files this tool writes (`run.json`, `coverage.json`, `index.html`, `summary.md`, `recordings/`, `snapshots/`, any `shard-N/`) and leaves everything else — and the directory itself — untouched.
+- **`cleanReportDir` only acts when `run.json` is already in the folder.** That file is the marker that this folder has been a twd report before; without it, a same-named `index.html` or `summary.md` sitting in `report.dir` is presumed to be the user's own and is left alone. The first run into a fresh `report.dir` therefore cleans nothing (there is nothing of ours there yet), and every run after that one cleans normally because `writeReportFolder` always writes `run.json`.
 - **`emitReport` never throws.** A report that cannot be written, or a folder that cannot be cleaned first, is a warning on stderr; it cannot change the run's exit code or mask the original error. The same rule applies to `merge`.
 - **`outcome` must agree with the exit code.** `finalizeReport` (`src/runReport.js`) sets `outcome: "failed"` not just on a failed test but on an error-mode contract failure, `stoppedEarly`, or `recordingFailed` on a green suite — so a passing test run with a broken recording or a contract violation still reports `"failed"`, never `"passed"`.
 - **The report is written from the `catch` path too.** A crash mid-run writes `outcome: "interrupted"` with `error` populated, using whatever partial results were gathered — and `merge` refuses to merge an interrupted shard rather than average it into a false summary.
@@ -102,6 +103,15 @@ These are load-bearing and easy to undo by accident:
 shaped alike. Both assume the app is **already served** at the url in
 `twd.config.json` — starting a dev server belongs to the caller's workflow, not
 to the action.
+
+`run`'s `report-dir` input defaults to **empty**, not `.twd/report`: a non-empty
+default was always passed to `--report-dir`, which unconditionally overrode
+`report.dir` from `twd.config.json` even when the caller never set the input.
+The "Resolve the report directory" step mirrors the CLI's own fallback (input,
+then `config.report.dir`, then `.twd/report`) purely so the job-summary,
+upload and PR-comment steps know where to look — the `run` step itself only
+passes `--report-dir` when the input is non-empty, exactly like `record` never
+overrides `record.dir` unless asked.
 
 Conventions that are load-bearing in both:
 
