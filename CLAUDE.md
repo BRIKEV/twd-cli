@@ -44,14 +44,14 @@ The numeric guards on the two recording flags differ **on purpose**, so do not h
 
 **`src/version.js`**: `cliVersion()` reads the installed package's version from its own `package.json`, for `run.json`'s `run.twdCliVersion`. Returns `null` under a mocked `fs` or a broken install; the report treats that as unknown rather than crashing.
 
-**`src/needsAttention.js`**: `needsAttention(report)` is the one ordered list of what broke — failed tests (each paired with its snapshot capture when the error names one), remaining snapshot failures, and contract results in `mode: "error"` — that both renderers below read, so the HTML and markdown views can never disagree about what needs attention. `contractWarnings(report)` is the equivalent list for non-fatal contract issues (warn-mode failures and any mode's warnings).
+**`src/needsAttention.js`**: `needsAttention(report)` is the one ordered list of what broke: failed tests (each paired with its snapshot capture when the error names one), remaining snapshot failures, and contract results in `mode: "error"`. Both renderers below read it, so the HTML and markdown views can never disagree about what needs attention. `contractWarnings(report)` is the equivalent list for non-fatal contract issues (warn-mode failures and any mode's warnings).
 
 **`src/reportMarkdown.js`** / **`src/reportHtml.js`**: render a `run.json` report (as built by `src/runReport.js`) into `summary.md` / `index.html`. Both drive their failures section from `needsAttention()`; `reportHtml.js` also inlines snapshot captures as data URIs via `loadSnapshotImages()` (`src/reportFiles.js`), so the HTML file is self-contained and safe to upload as a single CI artifact.
 
-**`src/reportCommand.js`**: `renderReport({ input, format })` backs `twd-cli report [<dir|run.json>] --format markdown|html|json` — reads a saved report via `readReport()` (which enforces `REPORT_SCHEMA_VERSION`) and renders it in the requested format to stdout. The command exits 1 only when the report is missing or unreadable.
+**`src/reportCommand.js`**: `renderReport({ input, format })` backs `twd-cli report [<dir|run.json>] --format markdown|html|json`. It reads a saved report via `readReport()` (which enforces `REPORT_SCHEMA_VERSION`) and renders it in the requested format to stdout. The command exits 1 only when the report is missing or unreadable.
 
 **`src/index.js`**: `runTests({ testFilters, recordOverrides })` is the main orchestrator:
-1. Loads config via `loadConfig()`, resolves report options, and cleans the report folder via `cleanReportDir()` — before anything else, including the ffmpeg probe and the browser launch — then overlays `recordOverrides` onto a **copy** of `config.record` (never mutate it, it can be the shared `DEFAULT_RECORD` object). `record.dir` defaults to `<report dir>/recordings` when unset
+1. Loads config via `loadConfig()`, resolves report options, and cleans the report folder via `cleanReportDir()`, before anything else (including the ffmpeg probe and the browser launch), then overlays `recordOverrides` onto a **copy** of `config.record` (never mutate it, it can be the shared `DEFAULT_RECORD` object). `record.dir` defaults to `<report dir>/recordings` when unset
 2. Probes ffmpeg via `assertFfmpegCapable()` when recording, before anything expensive, so an unusable binary fails fast instead of after launch and navigation. It checks the **capability**, not the version: `ffmpeg -h muxer=mp4` must list every movflag puppeteer will pass
 3. Launches Puppeteer with configured headless mode and args
 4. `page.setViewport(recording ? record.viewport : config.viewport)` — every run gets an explicit viewport, `1280x800` normally and `1280x1600` while recording
@@ -64,7 +64,7 @@ The numeric guards on the two recording flags differ **on purpose**, so do not h
 11. Runs tests in ordered chunks via `runByIds(chunkIds)`, with chunk size controlled by config; accumulates results in Node so the run can stop after `maxFailures` failures and partial results survive a timeout or crash
 12. Stops the recorder through `stopRecording()`, which never awaits a stop whose encoder is already known dead, then reports the artifact — but only after checking the file has bytes on disk. A resolved `stop()` is not evidence of a usable video (see the recording notes below). An mp4 is converted to H.264 before its size is read
 13. Optionally collects `window.__coverage__` and writes it to `.nyc_output/out.json` (skipped whenever the run has failures, including an early bail)
-14. Closes the browser, then calls `emitReport()` to write the report folder (`run.json`, plus `index.html`/`summary.md` per `report.formats`). `emitReport` never throws — a write failure is a warning and cannot change the exit code or mask the original error (see Report gotchas below)
+14. Closes the browser, then calls `emitReport()` to write the report folder (`run.json`, plus `index.html`/`summary.md` per `report.formats`). `emitReport` never throws: a write failure is a warning and cannot change the exit code or mask the original error (see Report gotchas below)
 15. Prints a relay-style summary block (`formatRunComplete` in `src/testSummary.js`) as the last output: passed/failed/skipped counts, duration, failed tests with `suite > test` paths and error messages, retried tests, "Not run" count if stopped early, and a final `Report: <path>` line when a report was written. Known infrastructure errors (dev server down, sidebar missing, protocol timeout, Chrome launch failure) get actionable diagnostics from `src/diagnostics.js`
 16. Returns boolean `hasFailures`
 
@@ -89,12 +89,12 @@ These are load-bearing and easy to undo by accident:
 
 These are load-bearing and easy to undo by accident:
 
-- **`cleanReportDir` removes only `OWNED_ENTRIES` and `shard-*`, never the directory itself.** `report.dir` may point at a user's own folder, so the clean step deletes exactly the files this tool writes (`run.json`, `coverage.json`, `index.html`, `summary.md`, `recordings/`, `snapshots/`, any `shard-N/`) and leaves everything else — and the directory itself — untouched.
+- **`cleanReportDir` removes only `OWNED_ENTRIES` and `shard-*`, never the directory itself.** `report.dir` may point at a user's own folder, so the clean step deletes exactly the files this tool writes (`run.json`, `coverage.json`, `index.html`, `summary.md`, `recordings/`, `snapshots/`, any `shard-N/`) and leaves everything else, the directory included, untouched.
 - **`cleanReportDir` only acts when `run.json` is already in the folder.** That file is the marker that this folder has been a twd report before; without it, a same-named `index.html` or `summary.md` sitting in `report.dir` is presumed to be the user's own and is left alone. The first run into a fresh `report.dir` therefore cleans nothing (there is nothing of ours there yet), and every run after that one cleans normally because `writeReportFolder` always writes `run.json`.
 - **`emitReport` never throws.** A report that cannot be written, or a folder that cannot be cleaned first, is a warning on stderr; it cannot change the run's exit code or mask the original error. The same rule applies to `merge`.
-- **`outcome` must agree with the exit code.** `finalizeReport` (`src/runReport.js`) sets `outcome: "failed"` not just on a failed test but on an error-mode contract failure, `stoppedEarly`, or `recordingFailed` on a green suite — so a passing test run with a broken recording or a contract violation still reports `"failed"`, never `"passed"`.
-- **The report is written from the `catch` path too.** A crash mid-run writes `outcome: "interrupted"` with `error` populated, using whatever partial results were gathered — and `merge` refuses to merge an interrupted shard rather than average it into a false summary.
-- **`merge` reads and stages before it cleans.** `--out` may be the same folder `merge` is reading shards from, so it copies everything into a `<out>.tmp-merge` staging folder first, only then cleans `outDir`, and always removes the staging folder in a `finally` — including on a throw.
+- **`outcome` must agree with the exit code.** `finalizeReport` (`src/runReport.js`) sets `outcome: "failed"` not just on a failed test but on an error-mode contract failure, `stoppedEarly`, or `recordingFailed` on a green suite, so a passing test run with a broken recording or a contract violation still reports `"failed"`, never `"passed"`.
+- **The report is written from the `catch` path too.** A crash mid-run writes `outcome: "interrupted"` with `error` populated, using whatever partial results were gathered, and `merge` refuses to merge an interrupted shard rather than average it into a false summary.
+- **`merge` reads and stages before it cleans.** `--out` may be the same folder `merge` is reading shards from, so it copies everything into a `<out>.tmp-merge` staging folder first, only then cleans `outDir`, and always removes the staging folder in a `finally`, including on a throw.
 - **Sharded runs always write a report.** `--no-report` and `"report": false` are ignored (with a warning) under `--shard`, because `merge` needs every shard's artifact to explain a gap; a silently missing shard report would look identical to a shard that never ran.
 
 ## Composite actions
@@ -109,7 +109,7 @@ default was always passed to `--report-dir`, which unconditionally overrode
 `report.dir` from `twd.config.json` even when the caller never set the input.
 The "Resolve the report directory" step mirrors the CLI's own fallback (input,
 then `config.report.dir`, then `.twd/report`) purely so the job-summary,
-upload and PR-comment steps know where to look — the `run` step itself only
+upload and PR-comment steps know where to look. The `run` step itself only
 passes `--report-dir` when the input is non-empty, exactly like `record` never
 overrides `record.dir` unless asked.
 

@@ -347,7 +347,7 @@ export async function runTests(options = {}) {
     // Resolve the ordered id list to run: the filter result, or all tests.
     //
     // allTestIds (computed above) is the full ordered list, before filtering or
-    // slicing. Its order is what the fingerprint covers (as paths — the ids
+    // slicing. Its order is what the fingerprint covers (as paths; the ids
     // themselves are random per page load) and its length is
     // discovery.totalTests, so every shard agrees on both regardless of which
     // slice it took. filteredIds is the list the shards divide, so it is what

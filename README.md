@@ -173,7 +173,7 @@ Every `npx twd-cli run` writes a report folder, `.twd/report/` by default:
 ```
 .twd/report/
   run.json       # machine-readable result
-  index.html     # open in a browser — results, failures, recordings, layout snapshots
+  index.html     # open in a browser: results, failures, recordings, layout snapshots
   summary.md     # for PRs, GitHub Step Summaries, and CI logs
   recordings/    # video clips, when --record is set
   snapshots/     # layout snapshot captures, for a run with a failure
@@ -189,7 +189,7 @@ An AI agent or script should read `run.json` rather than parse console output:
 `outcome` (`"passed"`, `"failed"`, or `"interrupted"`), `summary` (pass/fail/skip
 counts), and `tests[].error` for what broke.
 
-Print a saved report to stdout — useful for a CI job summary:
+Print a saved report to stdout, useful for a CI job summary:
 
 ```bash
 npx twd-cli report --format markdown >> "$GITHUB_STEP_SUMMARY"
@@ -216,7 +216,7 @@ npx twd-cli run --report-dir ./ci-report   # write it elsewhere
 npx twd-cli run --no-report                # skip it for this run
 ```
 
-Add `.twd/` to your project's `.gitignore` — the folder is rewritten on every run.
+Add `.twd/` to your project's `.gitignore`. The folder is rewritten on every run.
 
 ## Recording
 
@@ -545,7 +545,7 @@ contracts/
 }
 ```
 
-`contractReportPath` is **deprecated** and will be removed — contract results
+`contractReportPath` is **deprecated** and will be removed. Contract results
 now appear in the [run report](#run-report)'s `summary.md` automatically.
 
 ### Contract Options

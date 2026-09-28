@@ -201,7 +201,7 @@ jobs:
         run: |
           # Cheap sanity guard, not a real gate: the "Merge shard reports" step
           # above has no `if: always()`, so we only reach here after `twd-cli
-          # merge` exited 0 — and runMerge only writes .twd/report/run.json once it
+          # merge` exited 0, and runMerge only writes .twd/report/run.json once it
           # has decided to succeed (src/mergeCommand.js). This check protects
           # against that assumption changing later, but it cannot fail today.
           if [ ! -f .twd/report/run.json ]; then

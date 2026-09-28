@@ -159,7 +159,7 @@ runs:
 
         REPORT_PATH="$REPORT_DIR/summary.md"
         if [ ! -f "$REPORT_PATH" ]; then
-          echo "No report summary found — skipping PR comment"
+          echo "No report summary found, skipping PR comment"
           exit 0
         fi
         BODY=$(mktemp)

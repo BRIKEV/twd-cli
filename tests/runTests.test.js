@@ -1845,7 +1845,7 @@ describe('runTests sharding', () => {
     expect(removed).not.toContain('report');
   });
 
-  // A report failure is a console.warn and must never change the exit code —
+  // A report failure is a console.warn and must never change the exit code:
   // cleanReportDir's own rmSync calls are unguarded, so the guard has to live
   // at the call site, not inside cleanReportDir.
   it('warns but keeps running when the report folder cannot be cleaned', async () => {

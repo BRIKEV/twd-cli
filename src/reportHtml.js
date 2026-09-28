@@ -39,7 +39,7 @@ function verdict(report) {
   const { summary, run, outcome } = report;
   // A saved run.json is user-editable disk content, read back by `twd-cli
   // report` without re-deriving it, so outcome and every summary value are
-  // escaped like any other field from it — not just the strings.
+  // escaped like any other field from it, not just the strings.
   const stats = [
     `<span><b>${esc(summary.passed)}</b> passed</span>`,
     `<span><b>${esc(summary.failed)}</b> failed</span>`,

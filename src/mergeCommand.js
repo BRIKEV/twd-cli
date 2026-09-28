@@ -80,7 +80,7 @@ export function runMerge({ dir, out = null } = {}) {
       const total = merged.shards[0].total;
       throw new Error(
         `Missing shard report(s): ${missing.map((i) => `${i}/${total}`).join(', ')}. ` +
-        'A shard job likely failed before uploading its artifact — check that the ' +
+        'A shard job likely failed before uploading its artifact. Check that the ' +
         'upload step runs with `if: always()`.'
       );
     }
@@ -139,7 +139,7 @@ export function runMerge({ dir, out = null } = {}) {
       const coveragePath = path.join(nycDir, 'out.json');
       fs.writeFileSync(coveragePath, JSON.stringify(mergeCoverage(coverages)));
       // Set on the report before writeReportFolder below, same as a single
-      // run's coverage field — otherwise the merged run.json always reads
+      // run's coverage field, otherwise the merged run.json always reads
       // coverage: null even though .nyc_output/out.json exists on disk.
       merged.coverage = { file: path.relative(outDir, coveragePath).split(path.sep).join('/') };
       console.log(

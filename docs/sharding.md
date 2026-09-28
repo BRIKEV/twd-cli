@@ -103,7 +103,7 @@ contract was violated in `error` mode, or if a shard report is missing entirely.
 
 Each shard's own report only covers its slice of the suite, so posting one
 shard's `summary.md` would show a fraction of the picture. `merge` writes the
-joined report — `summary.md` included — so the PR comment belongs in the merge
+joined report, `summary.md` included, so the PR comment belongs in the merge
 job instead:
 
 ```yaml
