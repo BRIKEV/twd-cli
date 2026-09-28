@@ -8,7 +8,7 @@ CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) �
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
-- [Sharding across CI jobs](#sharding-across-ci-jobs) **(beta)**: split a long run across parallel jobs ([details](docs/sharding.md))
+- [Beta features](#beta-features): sharding and layout snapshots
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 
@@ -39,7 +39,7 @@ npx twd-cli run
 ```bash
 npx twd-cli --help          # the commands
 npx twd-cli run --help      # every run option
-npx twd-cli merge --help
+npx twd-cli report --help   # render a saved report
 ```
 
 Help prints and exits `0` without launching a browser or reading your config.
@@ -160,7 +160,7 @@ Create a `twd.config.json` file in your project root:
 | `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
 | `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
-| `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin |
+| `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin. See [layout snapshots](docs/layout-snapshots.md) |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
 | `report` | object | `{ "dir": ".twd/report", "formats": ["html", "markdown"] }` | Run report folder and views; `false` disables it |
 
@@ -215,10 +215,6 @@ single run:
 npx twd-cli run --report-dir ./ci-report   # write it elsewhere
 npx twd-cli run --no-report                # skip it for this run
 ```
-
-A [sharded](#sharding-across-ci-jobs) run always writes its report — `--no-report`
-and `"report": false` are ignored (with a warning) when `--shard` is set, since
-`merge` needs every shard's report to join them back together.
 
 Add `.twd/` to your project's `.gitignore` — the folder is rewritten on every run.
 
@@ -277,69 +273,6 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | `ffmpegPath` | string | `"ffmpeg"` | Path to the binary if it is not on your `PATH` |
 
 Full explanations, including why `postRoll` is on by default and the measured frame rate cost of `speed`, are in the [Recording Runs](https://brikev.github.io/twd/recording) docs.
-
-## Layout snapshots (beta)
-
-`twd-js` 1.10.0 adds `twd.matchLayout`, which watches the **geometry** of a page
-and fails when it moves. It is off in the browser sidebar on purpose, because
-the sidebar resizes the page and a developer's window is an arbitrary size, so
-**twd-cli is where a layout snapshot is actually decided.**
-
-```bash
-# Compare against the committed references
-npx twd-cli run
-
-# Accept the current layout as the new reference
-npx twd-cli run --update-snapshots
-
-# A missing reference is a failure, never created
-npx twd-cli run --ci
-```
-
-### The two flags are separate on purpose
-
-| Flag | What it does |
-|------|--------------|
-| `--update-snapshots` | Rewrites references that already exist. Without it, a changed layout fails, which is the point |
-| `--ci` | Forbids *creating* a reference. Without it, a brand new test writes its own baseline on the first CI run and passes forever, and nobody finds out |
-
-They close two different holes, which is why they are two flags rather than one
-mode. `--ci` outranks `--update-snapshots`: both set, with no reference on disk,
-is a failure and not a write.
-
-### Seeing what changed
-
-A failure writes `<name>.failed.png` next to the reference: your page as it
-rendered, with the rows that diverged boxed in red. In CI the machine that
-produced it is gone by the time anyone looks, so every capture also appears
-embedded in the [run report](#run-report)'s **`.twd/report/index.html`**.
-
-One file, one artifact, opens in any browser:
-
-```yaml
-- name: Upload the run report
-  if: failure()
-  uses: actions/upload-artifact@v4
-  with:
-    name: layout-snapshots
-    path: .twd/report
-```
-
-Captures from earlier runs are cleared before each run, so the report only ever
-shows failures from the run you are looking at. The committed `.snap` references
-next to them are never touched.
-
-### Two things to know
-
-**The viewport changed.** twd-cli now sets an explicit viewport on every run
-(`1280x800` by default), not just when recording. Before, a normal run inherited
-Puppeteer's implicit size. A test that happened to depend on the old size can
-start behaving differently. Set `viewport` in `twd.config.json` to pin your own.
-
-**`snapshotDir` has to match the Vite plugin.** twd-cli and the `twdSnapshot`
-plugin are separate processes that never talk, so the directory is configured
-twice. If the report comes out empty when you expected failures, this is the
-first thing to check.
 
 ## How It Works
 
@@ -409,9 +342,9 @@ jobs:
 |-------|---------|-------------|
 | `working-directory` | `.` | Directory where `twd.config.json` lives |
 | `contract-report` | `false` | Post contract validation summary as a PR comment |
-| `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. See [Sharding](#sharding-across-ci-jobs) |
+| `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. Beta, see [docs/sharding.md](docs/sharding.md) |
 | `report-dir` | (empty) | Where the run report folder is written. Empty uses `report.dir` from `twd.config.json`, or `.twd/report` if that isn't set either |
-| `upload-report` | `true` | Upload the report folder as an artifact named `twd-report` (`twd-report-<index>` for a shard), the layout `twd-cli merge` expects |
+| `upload-report` | `true` | Upload the report folder as an artifact named `twd-report` (`twd-report-<index>` for a shard) |
 
 #### With code coverage
 
@@ -648,33 +581,12 @@ When `contractReportPath` is set and you use the action with `contract-report: '
 
 Failed validations are included in a collapsible details section with a link to the full CI log.
 
-## Sharding across CI jobs
+## Beta features
 
-> **Beta.** Strictly additive: a run without `--shard` behaves exactly as before,
-> so turning this on cannot affect your existing pipeline. How tests are assigned
-> to shards may still change — see [docs/sharding.md](docs/sharding.md).
+These work, but their behaviour may still change between minor versions.
 
-Long suites can be split across parallel CI jobs. Each shard runs one slice of
-the suite and writes a report; `twd-cli merge` joins them into a single summary
-and owns the exit code.
-
-```bash
-npx twd-cli run --shard 2/4     # "I am job 2 of 4"
-npx twd-cli merge .twd/shards   # join the reports back together
-```
-
-The `4` is how many jobs you are running, **not** how many tests exist — each
-shard discovers the whole suite itself and keeps every 4th test, so the suite can
-grow without a workflow edit.
-
-**Sharding only pays on long suites.** It trades fixed per-job setup for parallel
-execution, so a suite that runs in seconds comes out *slower*. As a rule of
-thumb, two shards win once test time is more than twice the merge job's cost.
-
-See **[docs/sharding.md](docs/sharding.md)** for the full workflow, the three
-conditions that are easy to get wrong, the break-even maths with measured
-numbers, and the caveats — test independence, `maxFailures` being per shard, and
-coverage on a red run.
+- **[Sharding across CI jobs](docs/sharding.md)**: split a long run across parallel jobs and merge the reports back into one.
+- **[Layout snapshots](docs/layout-snapshots.md)**: fail a test when the page geometry moves, with `--update-snapshots` and `--ci`.
 
 ## Requirements
 
