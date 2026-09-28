@@ -1,3 +1,26 @@
+## <small>1.10.0 (2026-09-28)</small>
+
+* feat(report): every `twd-cli run` writes a report folder, `.twd/report/`, not just a sharded run. It holds `run.json`, a self-contained `index.html` and a `summary.md`, plus `recordings/` and `snapshots/` when the run produced any. The run-complete block ends with `Report: .twd/report/index.html`. Until now a plain run left nothing machine-readable behind, so an agent or a CI step had to scrape the console (#36)
+* feat(report): `run.json` moves to schema v3 with a top-level `outcome` (`passed`, `failed` or `interrupted`), a precomputed `summary`, a `run` header, and per-test `error`, `attempts` and `recording`. `outcome` always agrees with the exit code, and an error-mode contract failure on an otherwise green suite is `failed`, so a dashboard cannot read green on a red build (#36)
+* feat(report): `index.html` is triage-first: the verdict, then one "Needs attention" list holding failed tests, layout snapshot diffs and error-mode contract failures with their evidence inline, then collapsed sections for every test, contracts grouped by spec, and artifacts. It works offline in light and dark themes (#36)
+* feat(report): `summary.md` lists only what broke, capped at 20 entries and sized for a PR comment. A green run is a heading and a counts table (#36)
+* feat(report): a run that crashes still writes a report, with `outcome: "interrupted"`, the error and its diagnostic, and any partial results. A `--test` filter that matches nothing is `interrupted` too; `--changed-since` with no changed tests writes a `passed` report with zero tests (#36)
+* feat(cli): `twd-cli report [<dir|run.json>] --format markdown|html|json` prints a saved report to stdout, for example into `$GITHUB_STEP_SUMMARY`. It exits 1 only when the report is missing or unreadable (#36)
+* feat(cli): `"report": { "dir", "formats" }` in `twd.config.json`, or `"report": false`, and `--report-dir` / `--no-report` on `run`. A sharded run always writes its report, since `merge` needs it (#36)
+* feat(merge): `merge` writes the same report folder (`--out` is now a directory, default `./.twd/report`), keeps each shard's recordings and snapshot captures under `shard-N/`, and refuses a shard that was interrupted (#36)
+* feat(actions): the `run` action writes the report's markdown to the job summary and uploads the folder as `twd-report` (`twd-report-<index>` for a shard). Its `report-dir` input now defaults to empty, so `report.dir` from `twd.config.json` is honoured. The contract PR comment posts `summary.md` (#36)
+* fix(report): writing or cleaning the report never changes the exit code; a failure there is a warning. Cleaning removes only the files twd-cli writes, and only in a folder that already holds a `run.json`, so `report.dir` pointed at your own folder is safe (#36)
+* note: **`record.dir` now defaults to `<report dir>/recordings`** (`.twd/report/recordings`) instead of `./twd-artifacts`. An explicit `record.dir` is unchanged. Anything that uploads `twd-artifacts` by path needs updating; the `record` action already follows the new default
+* note: `.twd/snapshot-report.html` is gone; failed layout captures are embedded in `index.html`. The sharding beta paths `.twd/run/` and `.twd/merged-run.json` are gone too, replaced by the report folder
+* note: `contractReportPath` still works in this release but prints a deprecation warning. `summary.md` carries the contract results
+
+Add `.twd/` to your project's `.gitignore`: the folder is rewritten on every
+run. The behaviour change to check before upgrading is the recording default.
+A workflow that uploads `./twd-artifacts` by path will find it empty.
+
+The action's `cli-version` default moves to 1.10.0. Nothing here needs a newer
+`twd-js`.
+
 ## <small>1.9.0 (2026-09-24)</small>
 
 * feat(cli): `--help` answers without running anything. `npx twd-cli run --help`, `merge --help`, a bare `twd-cli`, `help`, `help <command>`, `--help` and `-h` all print usage to stdout and exit 0 before the CLI loads puppeteer, reads `twd.config.json` or touches git. Until now `run --help` was an unknown token the parser dropped, so it **ran the entire suite**: minutes of wall clock and a browser nobody asked for, with nothing printed to say the flag was not understood (#34)
