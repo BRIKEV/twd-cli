@@ -1,14 +1,14 @@
 # Sharding across CI jobs
 
-> **Beta.** Sharding is new and marked beta on purpose. It is strictly additive —
+> **Beta.** Sharding is new and marked beta on purpose. It is strictly additive:
 > a run without `--shard` behaves exactly as it did before, writes the same
-> files, and exits the same way — so enabling it cannot affect your existing
+> files, and exits the same way, so enabling it cannot affect your existing
 > pipeline. What may still change is **how tests are assigned to shards**: today
 > each shard takes every nth test from the discovered list, and a future release
 > is likely to group by top-level `describe` instead, so a suite always stays in
 > one shard. Do not build anything that depends on *which* tests land in a given
-> shard. Everything else — the flags, the report files, `merge`'s output and exit
-> code — is stable.
+> shard. Everything else (the flags, the report files, `merge`'s output and exit
+> code) is stable.
 
 A single run walks the whole suite in one browser. Sharding splits it across
 parallel CI jobs instead, then joins the results back into one report.
@@ -23,7 +23,7 @@ need to know the test count: each shard boots its own browser, discovers the who
 suite exactly as a normal run does, and keeps every 4th test. Add tests and the
 same 4 jobs just split more of them.
 
-Each shard writes `run.json` and `coverage.json` to `./.twd/run` (change it with
+Each shard writes `run.json` and `coverage.json` to `./.twd/report` (change it with
 `--report-dir`). `merge` reads the downloaded shard directories, combines test
 results, coverage and contract validation, prints one summary, and exits non-zero
 if anything failed anywhere.
@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: twd-run-*
+          pattern: twd-report-*
           path: .twd/shards
 
       - name: Merge the shard reports
@@ -99,11 +99,12 @@ jobs:
 `merge` owns the final exit code: it fails if any test failed in any shard, if a
 contract was violated in `error` mode, or if a shard report is missing entirely.
 
-### Posting the contract report
+### Posting the report
 
-A sharded run deliberately writes no contract markdown per shard — each would
-overwrite the others with a fraction of the mocks — so `merge` writes it, and the
-PR comment belongs in the merge job:
+Each shard's own report only covers its slice of the suite, so posting one
+shard's `summary.md` would show a fraction of the picture. `merge` writes the
+joined report, `summary.md` included, so the PR comment belongs in the merge
+job instead:
 
 ```yaml
   merge:
@@ -113,17 +114,17 @@ PR comment belongs in the merge job:
     steps:
       # ...as above, through "Merge the shard reports"...
 
-      - name: Post contract report to PR
-        if: github.event_name == 'pull_request' && hashFiles('.twd/contract-report.md') != ''
+      - name: Post the report to PR
+        if: github.event_name == 'pull_request' && hashFiles('.twd/report/summary.md') != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file .twd/contract-report.md
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file .twd/report/summary.md
 ```
 
 ## Without the bundled action
 
 If you drive the CLI directly, you own the two steps the action was doing for
-you — installing Chrome, and uploading the report with `if: always()`:
+you: installing Chrome, and uploading the report with `if: always()`:
 
 ```yaml
       - run: npx puppeteer browsers install chrome
@@ -133,8 +134,8 @@ you — installing Chrome, and uploading the report with `if: always()`:
         # from "this shard never ran".
         if: always()
         with:
-          name: twd-run-${{ matrix.shard }}
-          path: .twd/run
+          name: twd-report-${{ matrix.shard }}
+          path: .twd/report
           if-no-files-found: error
 ```
 
@@ -170,7 +171,7 @@ job ~126s (89s of which was a SonarCloud scan):
 | 4 | 6.5 min | +47% |
 
 Two things to take from that. Wall clock has a floor of `V + M` no matter how far
-you shard, so the returns fall off quickly — past four shards you pay a lot for
+you shard, so the returns fall off quickly: past four shards you pay a lot for
 seconds. And sharding always costs *more* total compute than it saves in latency,
 because every shard repeats `V`. If you are billed for runner minutes, or your
 runner concurrency is contended, prefer the smallest `N` that gets you under your
@@ -182,15 +183,18 @@ from 25s in one job to 41s across two plus a merge.
 ## Caveats
 
 - **Coverage.** Each shard writes its own `coverage.json`; `merge` combines them
-  into `.nyc_output/out.json` — but only when the whole run is green, matching how
+  into `.nyc_output/out.json`, but only when the whole run is green, matching how
   a single run behaves. `merge` reports how many shards contributed.
 - **Missing shards are an error.** If a shard job dies before uploading, `merge`
   refuses and names the gap rather than silently reporting 3 of 4 shards as a
   complete green run.
+- **A shard always writes its report.** `--no-report` and `"report": false` are
+  ignored (with a warning) when `--shard` is set, because `merge` needs every
+  shard's report to join them back together.
 - **Tests must register identically in every job.** Each shard fingerprints the
   ordered list of `"suite > test"` paths it discovered and `merge` verifies they
-  match. Registering tests conditionally — behind a feature flag, a date,
-  `Math.random()` — makes the fingerprints diverge and `merge` will say so.
+  match. Registering tests conditionally (behind a feature flag, a date,
+  `Math.random()`) makes the fingerprints diverge and `merge` will say so.
   (Paths rather than internal test ids: `twd-js` assigns those at registration
   time and they differ on every page load, so each shard's browser sees its own.)
 - **`maxFailures` is per shard.** Four shards at the default of 10 can reach 40
@@ -199,7 +203,7 @@ from 25s in one job to 41s across two plus a merge.
   is sharded. As with any filtered run, coverage is skipped.
 - **Recording** produces one clip per shard; they are not concatenated.
 - **A missing shard leaves no merged report on disk.** `merge` throws before it
-  writes `.twd/merged-run.json`, so a CI step that uploads that path with
+  writes `.twd/report/`, so a CI step that uploads that path with
   `if: always()` will find nothing when a shard is missing. The error message on
   stderr is the diagnosis in that case.
 - **`record.filename` collides under sharding.** Only the *derived* recording

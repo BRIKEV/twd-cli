@@ -3,7 +3,8 @@ import path from 'path';
 
 export const DEFAULT_RECORD = {
   enabled: false,
-  dir: './twd-artifacts',
+  // null resolves to <report dir>/recordings in runTests.
+  dir: null,
   filename: null,
   // A human bound, not a cost one: a clip costs ~250ms, but nobody opens 30 of
   // them. 0 disables it.
@@ -57,6 +58,9 @@ export const DEFAULT_RECORD = {
 // something different. When recording, that one still wins.
 export const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
+export const DEFAULT_REPORT = { dir: './.twd/report', formats: ['html', 'markdown'] };
+export const REPORT_FORMATS = ['html', 'markdown'];
+
 const DEFAULT_CONFIG = {
   url: 'http://localhost:5173',
   timeout: 10000,
@@ -74,11 +78,12 @@ const DEFAULT_CONFIG = {
   // that never talk to each other, so this duplication cannot be designed away.
   snapshotDir: '__twd_snapshots__',
   record: DEFAULT_RECORD,
+  report: DEFAULT_REPORT,
 };
 
 export function loadConfig() {
   const configPath = path.resolve(process.cwd(), 'twd.config.json');
-  
+
   if (fs.existsSync(configPath)) {
     try {
       const configFile = fs.readFileSync(configPath, 'utf-8');
@@ -96,12 +101,25 @@ export function loadConfig() {
           ...userRecord,
           viewport: { ...DEFAULT_RECORD.viewport, ...(userRecord.viewport || {}) },
         },
+        report: userConfig.report === false ? false : { ...DEFAULT_REPORT, ...(userConfig.report || {}) },
       };
     } catch (error) {
       console.warn('Warning: Could not parse twd.config.json, using defaults:', error.message);
       return DEFAULT_CONFIG;
     }
   }
-  
+
   return DEFAULT_CONFIG;
+}
+
+// null means no report. run.json is implied, so formats lists only derived views.
+export function resolveReportOptions(configReport, { noReport = false, reportDir = null } = {}) {
+  if (noReport || configReport === false) return null;
+  const merged = { ...DEFAULT_REPORT, ...(configReport || {}) };
+  const requested = Array.isArray(merged.formats) ? merged.formats : [];
+  return {
+    dir: reportDir ?? merged.dir,
+    formats: requested.filter((f) => REPORT_FORMATS.includes(f)),
+    unknownFormats: requested.filter((f) => !REPORT_FORMATS.includes(f)),
+  };
 }

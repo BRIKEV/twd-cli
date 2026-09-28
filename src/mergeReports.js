@@ -1,4 +1,4 @@
-import { REPORT_SCHEMA_VERSION } from './runReport.js';
+import { REPORT_SCHEMA_VERSION, finalizeReport } from './runReport.js';
 
 /**
  * Combines shard reports into one report of the same shape.
@@ -88,8 +88,12 @@ export function mergeRunReports(reports) {
 
   const first = reports[0];
 
-  return {
+  return finalizeReport({
     schemaVersion: first.schemaVersion,
+    run: first.run,
+    error: null,
+    snapshots: reports.flatMap((r) => r.snapshots ?? []),
+    coverage: null,
     // Copy before sorting: sort mutates, and the input reports are the caller's.
     shards: [...shards].sort((a, b) => a.index - b.index),
     discovery: first.discovery,
@@ -107,7 +111,7 @@ export function mergeRunReports(reports) {
       results: reports.flatMap((r) => r.contracts.results),
       skipped: reports.flatMap((r) => r.contracts.skipped),
     },
-  };
+  });
 }
 
 /**

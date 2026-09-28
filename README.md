@@ -1,13 +1,14 @@
 # twd-cli
 
-CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) — executes your in-browser TWD tests in a headless environment. Puppeteer is only used to open the page; all tests run inside the real browser context against real DOM.
+CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/). It executes your in-browser TWD tests in a headless environment. Puppeteer is only used to open the page; all tests run inside the real browser context against real DOM.
 
 - [Installation](#installation)
 - [Usage](#usage): running tests, filtering, configuration
+- [Run report](#run-report): the `.twd/report/` folder every run writes
 - [Recording](#recording): capture a run to video, paced so it is watchable
 - [Contract Validation](#contract-validation): check your mocks against OpenAPI specs
 - [CI/CD Integration](#cicd-integration): GitHub Action and custom setups
-- [Sharding across CI jobs](#sharding-across-ci-jobs) **(beta)**: split a long run across parallel jobs ([details](docs/sharding.md))
+- [Beta features](#beta-features): sharding and layout snapshots
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 
@@ -38,7 +39,7 @@ npx twd-cli run
 ```bash
 npx twd-cli --help          # the commands
 npx twd-cli run --help      # every run option
-npx twd-cli merge --help
+npx twd-cli report --help   # render a saved report
 ```
 
 Help prints and exits `0` without launching a browser or reading your config.
@@ -74,7 +75,7 @@ npx twd-cli run --test "Login" --test "Signup"
 Notes:
 
 - If no test matches any filter, the run exits with code `1` and prints
-  `No tests matched filter(s): …` — so a typo won't silently look like a pass.
+  `No tests matched filter(s): …`, so a typo won't silently look like a pass.
 - Code coverage collection is skipped while a `--test` filter is active, since a
   filtered run is a partial (debug) run.
 
@@ -94,12 +95,12 @@ npx twd-cli run --record --changed-since origin/main
 
 How the set is worked out:
 
-1. `git merge-base <ref> HEAD` for the base, falling back to `<ref>` itself —
-   a branch is not always a descendant of wherever the base has moved to.
+1. `git merge-base <ref> HEAD` for the base, falling back to `<ref>` itself,
+   because a branch is not always a descendant of wherever the base has moved to.
 2. `it()` titles on lines the branch **added**, in `*.twd.test.*` files only.
    The tests that already lived in the same file are noise, and pacing makes
    them expensive to record.
-3. If the diff added no `it()` at all, every title in the changed files —
+3. If the diff added no `it()` at all, every title in the changed files:
    a body can change without its title line moving, and recording nothing
    would be worse than recording a little too much.
 
@@ -111,7 +112,7 @@ committing first.
 Notes:
 
 - **A branch that changed no tests prints one line and exits `0`.** An empty
-  result is a normal CI outcome, not a failure — unlike `--test`, which is an
+  result is a normal CI outcome, not a failure, unlike `--test`, which is an
   assertion you typed and still exits `1` when it matches nothing. This is
   decided before the browser launches, so such a run needs no dev server at all.
 - **It unions with `--test`** rather than overriding it, so you can add one
@@ -119,7 +120,7 @@ Notes:
 - **The base branch has to be in the clone.** `actions/checkout` defaults to
   `fetch-depth: 1`, which fetches no history; set `fetch-depth: 0`. The error
   says so if you forget.
-- It is a filter, not a recording feature — `--record` is optional.
+- It is a filter, not a recording feature. `--record` is optional.
 
 ### Configuration
 
@@ -153,16 +154,69 @@ Create a `twd.config.json` file in your project root:
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
 | `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
-| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). Tests run in chunks via `runByIds`, so this bounds a **single chunk's browser call** (not the entire run) — raise it (e.g. `600000`) for slow CI or if individual chunks hang; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
+| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). Tests run in chunks via `runByIds`, so this bounds a **single chunk's browser call** (not the entire run). Raise it (e.g. `600000`) for slow CI or if individual chunks hang; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
 | `maxFailures` | number | `10` | Stop the run once this many tests have failed in total; the CLI prints the results gathered so far and exits non-zero. Set `0` to disable and always run every test |
 | `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
-| `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
-| `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+| `contracts` | array | none | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
+| `contractReportPath` | string | none | Path to write a markdown report for CI/PR integration |
 | `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
-| `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin |
+| `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin. See [layout snapshots](docs/layout-snapshots.md) |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
+| `report` | object | `{ "dir": ".twd/report", "formats": ["html", "markdown"] }` | Run report folder and views; `false` disables it |
 
 **Partial Results on Timeout or Crash:** Tests run in chunks (controlled by `chunkSize`), so on a `protocolTimeout` or unexpected crash mid-run, results from completed chunks are printed instead of being lost entirely.
+
+## Run report
+
+Every `npx twd-cli run` writes a report folder, `.twd/report/` by default:
+
+```
+.twd/report/
+  run.json       # machine-readable result
+  index.html     # open in a browser: results, failures, recordings, layout snapshots
+  summary.md     # for PRs, GitHub Step Summaries, and CI logs
+  recordings/    # video clips, when --record is set
+  snapshots/     # layout snapshot captures, for a run with a failure
+```
+
+The last line of a run points at it:
+
+```
+  Report: .twd/report/index.html
+```
+
+An AI agent or script should read `run.json` rather than parse console output:
+`outcome` (`"passed"`, `"failed"`, or `"interrupted"`), `summary` (pass/fail/skip
+counts), and `tests[].error` for what broke.
+
+Print a saved report to stdout, useful for a CI job summary:
+
+```bash
+npx twd-cli report --format markdown >> "$GITHUB_STEP_SUMMARY"
+```
+
+`--format` accepts `markdown` (default), `html`, or `json`.
+
+### Configuring the report
+
+```json
+{
+  "report": {
+    "dir": ".twd/report",
+    "formats": ["html", "markdown"]
+  }
+}
+```
+
+Set `"report": false` to disable it entirely. Flags override the config for a
+single run:
+
+```bash
+npx twd-cli run --report-dir ./ci-report   # write it elsewhere
+npx twd-cli run --no-report                # skip it for this run
+```
+
+Add `.twd/` to your project's `.gitignore`. The folder is rewritten on every run.
 
 ## Recording
 
@@ -192,9 +246,9 @@ of those applied.
 
 `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests; re-running overwrites existing clips.
 
-mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
+mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser, and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
-The recording viewport is **1280x1600** by default — deliberately taller than a screen. Puppeteer captures exactly the viewport, with no scrolling and no letterboxing, so anything below the fold is simply absent from the video and nothing in the run says so. A short default silently cropped the very content the tests asserted on. Set `record.viewport` if your app is shorter and you would rather not record empty space.
+The recording viewport is **1280x1600** by default, deliberately taller than a screen. Puppeteer captures exactly the viewport, with no scrolling and no letterboxing, so anything below the fold is simply absent from the video and nothing in the run says so. A short default silently cropped the very content the tests asserted on. Set `record.viewport` if your app is shorter and you would rather not record empty space.
 
 **A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x1600, versus the 1280x800 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
 
@@ -205,11 +259,11 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Turn recording on. Same as `--record` |
-| `dir` | string | `"./twd-artifacts"` | Where the video is written |
+| `dir` | string | `<report dir>/recordings` | Where the video is written |
 | `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests. Setting it also records the whole run to one clip, since one name cannot address several |
 | `maxClips` | number | `20` | Most clips one run splits into. Past it the whole run goes to a single file. `0` disables the bound |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
-| `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even — the H.264 conversion needs it |
+| `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even: the H.264 conversion needs it |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Post-hoc playback speed. Costs frame rate, prefer `pace` |
 | `pace` | number | `300` | Milliseconds held after each command. `0` disables |
@@ -220,74 +274,11 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 
 Full explanations, including why `postRoll` is on by default and the measured frame rate cost of `speed`, are in the [Recording Runs](https://brikev.github.io/twd/recording) docs.
 
-## Layout snapshots (beta)
-
-`twd-js` 1.10.0 adds `twd.matchLayout`, which watches the **geometry** of a page
-and fails when it moves. It is off in the browser sidebar on purpose, because
-the sidebar resizes the page and a developer's window is an arbitrary size, so
-**twd-cli is where a layout snapshot is actually decided.**
-
-```bash
-# Compare against the committed references
-npx twd-cli run
-
-# Accept the current layout as the new reference
-npx twd-cli run --update-snapshots
-
-# A missing reference is a failure, never created
-npx twd-cli run --ci
-```
-
-### The two flags are separate on purpose
-
-| Flag | What it does |
-|------|--------------|
-| `--update-snapshots` | Rewrites references that already exist. Without it, a changed layout fails, which is the point |
-| `--ci` | Forbids *creating* a reference. Without it, a brand new test writes its own baseline on the first CI run and passes forever, and nobody finds out |
-
-They close two different holes, which is why they are two flags rather than one
-mode. `--ci` outranks `--update-snapshots`: both set, with no reference on disk,
-is a failure and not a write.
-
-### Seeing what changed
-
-A failure writes `<name>.failed.png` next to the reference: your page as it
-rendered, with the rows that diverged boxed in red. In CI the machine that
-produced it is gone by the time anyone looks, so twd-cli also writes a
-self-contained **`.twd/snapshot-report.html`** with every capture embedded.
-
-One file, one artifact, opens in any browser:
-
-```yaml
-- name: Upload layout snapshot failures
-  if: failure()
-  uses: actions/upload-artifact@v4
-  with:
-    name: layout-snapshots
-    path: .twd/snapshot-report.html
-```
-
-Captures from earlier runs are cleared before each run, so the report only ever
-shows failures from the run you are looking at. The committed `.snap` references
-next to them are never touched.
-
-### Two things to know
-
-**The viewport changed.** twd-cli now sets an explicit viewport on every run
-(`1280x800` by default), not just when recording. Before, a normal run inherited
-Puppeteer's implicit size. A test that happened to depend on the old size can
-start behaving differently. Set `viewport` in `twd.config.json` to pin your own.
-
-**`snapshotDir` has to match the Vite plugin.** twd-cli and the `twdSnapshot`
-plugin are separate processes that never talk, so the directory is configured
-twice. If the report comes out empty when you expected failures, this is the
-first thing to check.
-
 ## How It Works
 
-**Important**: Puppeteer is **not** used as a testing framework here. It simply provides a headless browser to load your application — the same way a user would open Chrome. Once the page loads, all test execution happens inside the real browser context through the [TWD runner](https://brikev.github.io/twd/). Your tests interact with real DOM, real components, and real browser APIs — Puppeteer just opens the door and gets out of the way.
+**Important**: Puppeteer is **not** used as a testing framework here. It simply provides a headless browser to load your application, the same way a user would open Chrome. Once the page loads, all test execution happens inside the real browser context through the [TWD runner](https://brikev.github.io/twd/). Your tests interact with real DOM, real components, and real browser APIs. Puppeteer just opens the door and gets out of the way.
 
-**Contract Validation**: Mock overlaps are automatically handled — if multiple tests or calls use the same alias but with different HTTP methods/URLs/statuses, all are validated separately (no silent drops).
+**Contract Validation**: Mock overlaps are automatically handled: if multiple tests or calls use the same alias but with different HTTP methods/URLs/statuses, all are validated separately (no silent drops).
 
 1. Launches a headless browser via Puppeteer (the only thing Puppeteer does)
 2. Navigates to your dev server URL
@@ -351,9 +342,9 @@ jobs:
 |-------|---------|-------------|
 | `working-directory` | `.` | Directory where `twd.config.json` lives |
 | `contract-report` | `false` | Post contract validation summary as a PR comment |
-| `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. See [Sharding](#sharding-across-ci-jobs) |
-| `report-dir` | `.twd/run` | Where the shard report is written. Only used when `shard` is set |
-| `upload-report` | `true` | Upload the shard report as an artifact named `twd-run-<index>`, the layout `twd-cli merge` expects. Only used when `shard` is set |
+| `shard` | (empty) | Run one shard of the suite, as `<index>/<total>` (e.g. `2/4`). Leave empty to run everything in one job. Beta, see [docs/sharding.md](docs/sharding.md) |
+| `report-dir` | (empty) | Where the run report folder is written. Empty uses `report.dir` from `twd.config.json`, or `.twd/report` if that isn't set either |
+| `upload-report` | `true` | Upload the report folder as an artifact named `twd-report` (`twd-report-<index>` for a shard) |
 
 #### With code coverage
 
@@ -378,7 +369,7 @@ known-good ffmpeg, records, and uploads the result:
     changed-since: ${{ github.event.pull_request.base.sha }}
 ```
 
-`changed-since` is what keeps the clip watchable — it records only the tests the
+`changed-since` is what keeps the clip watchable: it records only the tests the
 branch touched, rather than the whole suite. See
 [Running only what this branch changed](#running-only-what-this-branch-changed).
 
@@ -399,7 +390,7 @@ branch touched, rather than the whole suite. See
 
 | Output | Description |
 |--------|-------------|
-| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
+| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result**: a branch that changed no tests has nothing to record |
 | `dir` | Where the clips are, for a caller that wants to do its own upload |
 | `artifact-url` | URL of the artifact, when the action uploaded it |
 
@@ -407,7 +398,7 @@ branch touched, rather than the whole suite. See
 
 Because the distro build is not good enough, and finding that out the hard way is
 expensive. Puppeteer's screencast passes `-movflags hybrid_fragmented`, which
-arrived after ffmpeg 7 — `apt-get install ffmpeg` on `ubuntu-24.04` gets you
+arrived after ffmpeg 7, and `apt-get install ffmpeg` on `ubuntu-24.04` gets you
 6.1.1, which rejects it. The action installs an 8.1.x build whose `gpl` variant
 also carries `libx264`, which the H.264 conversion needs. Set
 `install-ffmpeg: false` if you manage your own; `twd-cli` checks the binary can
@@ -418,7 +409,7 @@ skips, so install ffmpeg 8+ yourself there.
 
 #### Reference workflow
 
-Recording is triggered by a label here, but that part is policy — record every PR
+Recording is triggered by a label here, but that part is policy: record every PR
 to `main` if you prefer. The trigger, the PR comment and the dev server stay in
 your workflow rather than the action, exactly as they do for `run`:
 
@@ -537,7 +528,6 @@ contracts/
 ```json
 {
   "url": "http://localhost:5173",
-  "contractReportPath": ".twd/contract-report.md",
   "contracts": [
     {
       "source": "./contracts/users-3.0.json",
@@ -555,11 +545,14 @@ contracts/
 }
 ```
 
+`contractReportPath` is **deprecated** and will be removed. Contract results
+now appear in the [run report](#run-report)'s `summary.md` automatically.
+
 ### Contract Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `source` | string | — | Path to the OpenAPI spec file (JSON) |
+| `source` | string | none | Path to the OpenAPI spec file (JSON) |
 | `baseUrl` | string | `"/"` | Base URL prefix to strip when matching mock URLs to spec paths |
 | `mode` | `"error"` \| `"warn"` | `"warn"` | `error` fails the test run, `warn` reports but doesn't fail |
 | `strict` | boolean | `true` | When true, rejects unexpected properties not defined in the spec |
@@ -588,33 +581,12 @@ When `contractReportPath` is set and you use the action with `contract-report: '
 
 Failed validations are included in a collapsible details section with a link to the full CI log.
 
-## Sharding across CI jobs
+## Beta features
 
-> **Beta.** Strictly additive: a run without `--shard` behaves exactly as before,
-> so turning this on cannot affect your existing pipeline. How tests are assigned
-> to shards may still change — see [docs/sharding.md](docs/sharding.md).
+These work, but their behaviour may still change between minor versions.
 
-Long suites can be split across parallel CI jobs. Each shard runs one slice of
-the suite and writes a report; `twd-cli merge` joins them into a single summary
-and owns the exit code.
-
-```bash
-npx twd-cli run --shard 2/4     # "I am job 2 of 4"
-npx twd-cli merge .twd/shards   # join the reports back together
-```
-
-The `4` is how many jobs you are running, **not** how many tests exist — each
-shard discovers the whole suite itself and keeps every 4th test, so the suite can
-grow without a workflow edit.
-
-**Sharding only pays on long suites.** It trades fixed per-job setup for parallel
-execution, so a suite that runs in seconds comes out *slower*. As a rule of
-thumb, two shards win once test time is more than twice the merge job's cost.
-
-See **[docs/sharding.md](docs/sharding.md)** for the full workflow, the three
-conditions that are easy to get wrong, the break-even maths with measured
-numbers, and the caveats — test independence, `maxFailures` being per shard, and
-coverage on a red run.
+- **[Sharding across CI jobs](docs/sharding.md)**: split a long run across parallel jobs and merge the reports back into one.
+- **[Layout snapshots](docs/layout-snapshots.md)**: fail a test when the page geometry moves, with `--update-snapshots` and `--ci`.
 
 ## Requirements
 

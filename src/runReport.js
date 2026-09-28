@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { buildTestPath } from './buildTestPath.js';
 
-export const REPORT_SCHEMA_VERSION = 2;
+export const REPORT_SCHEMA_VERSION = 3;
 
 /**
  * Hash of the full ordered list of test *paths* plus any active --test filters.
@@ -62,6 +62,13 @@ export function buildRunReport({
   recording = null,
   recordings = [],
   contracts = null,
+  retryCount = 0,
+  version = null,
+  url = null,
+  error = null,
+  snapshots = [],
+  recordingFailed = false,
+  coverage = null,
 }) {
   // Resolved here, in the shard that ran the tests, because this is the only
   // place the handler map is valid: ids are per-page-load random, so shard 2's
@@ -71,8 +78,12 @@ export function buildRunReport({
   const positions = new Map(allTestIds.map((id, i) => [id, i]));
   const selectedIds = filteredIds ?? allTestIds;
 
-  return {
+  return finalizeReport({
     schemaVersion: REPORT_SCHEMA_VERSION,
+    run: { twdCliVersion: version, url },
+    error,
+    snapshots,
+    coverage,
     shards: [
       {
         index: shard.index,
@@ -89,6 +100,7 @@ export function buildRunReport({
         coverageFile,
         recording,
         recordings,
+        recordingFailed,
       },
     ],
     discovery: {
@@ -110,12 +122,74 @@ export function buildRunReport({
       // random id. The path cannot serve as the key: two tests may share one
       // (duplicate names) and can legally land in different shards.
       index: positions.has(test.id) ? positions.get(test.id) : null,
+      attempts: attemptsFor(test, retryCount),
     })),
     contracts: contracts ?? {
       configured: false,
       partial: false,
       results: [],
       skipped: [],
+    },
+  });
+}
+
+function attemptsFor(test, retryCount) {
+  if (test.status === 'fail') return retryCount + 1;
+  if (test.status === 'pass') return test.retryAttempt ?? 1;
+  return 0;
+}
+
+export function contractCounts(contracts) {
+  const counts = { passed: 0, errors: 0, warnings: 0, skipped: contracts.skipped?.length ?? 0 };
+  for (const result of contracts.results ?? []) {
+    const validation = result.validation ?? { valid: true, warnings: [] };
+    if (!validation.valid) {
+      if (result.mode === 'error') counts.errors++;
+      else counts.warnings++;
+    } else if (validation.warnings?.length) {
+      counts.warnings++;
+    } else {
+      counts.passed++;
+    }
+  }
+  return counts;
+}
+
+// Everything derived lives here, so a merged report is finalized by the same rule as a single run.
+export function finalizeReport(report) {
+  const count = (status) => report.tests.filter((t) => t.status === status).length;
+  const contracts = contractCounts(report.contracts);
+  const stoppedEarly = report.shards.some((s) => s.stoppedEarly);
+  const summary = {
+    passed: count('pass'),
+    failed: count('fail'),
+    skipped: count('skip'),
+    notRun: report.shards.reduce((n, s) => n + s.notRun, 0),
+    stoppedEarly,
+    contracts,
+  };
+
+  let outcome = 'passed';
+  if (report.error) outcome = 'interrupted';
+  else if (summary.failed > 0 || contracts.errors > 0 || stoppedEarly || report.shards.some((s) => s.recordingFailed)) {
+    outcome = 'failed';
+  }
+
+  const starts = report.shards.map((s) => Date.parse(s.startedAt));
+  const ends = report.shards.map((s) => Date.parse(s.endedAt));
+  const startedAt = Math.min(...starts);
+  const endedAt = Math.max(...ends);
+
+  return {
+    ...report,
+    outcome,
+    summary,
+    recordings: report.shards.flatMap((s) => s.recordings ?? []),
+    run: {
+      ...report.run,
+      startedAt: new Date(startedAt).toISOString(),
+      endedAt: new Date(endedAt).toISOString(),
+      durationMs: endedAt - startedAt,
     },
   };
 }

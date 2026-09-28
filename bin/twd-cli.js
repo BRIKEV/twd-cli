@@ -5,12 +5,12 @@
 // opens a browser — would otherwise load the whole browser-automation graph
 // before it even looked at argv. The help paths below return for the same
 // reason: `run --help` used to run the entire suite.
-import { parseRunArgs, parseMergeArgs } from '../src/parseArgs.js';
-import { globalUsage, runUsage, mergeUsage } from '../src/usage.js';
+import { parseRunArgs, parseMergeArgs, parseReportArgs } from '../src/parseArgs.js';
+import { globalUsage, runUsage, mergeUsage, reportUsage } from '../src/usage.js';
 
 const [command, ...args] = process.argv.slice(2);
 
-const USAGE = { run: runUsage, merge: mergeUsage };
+const USAGE = { run: runUsage, merge: mergeUsage, report: reportUsage };
 const isHelp = (token) => token === '--help' || token === '-h';
 
 // Help is decided here, before either parser runs and before any dynamic
@@ -24,7 +24,7 @@ if (command === undefined || command === 'help' || isHelp(command)) {
   console.log(USAGE[command]());
 } else if (command === 'run') {
   try {
-    const { testFilters, changedSince, record, shard, reportDir, updateSnapshots, ci } =
+    const { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci } =
       parseRunArgs(args);
     const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
@@ -33,6 +33,7 @@ if (command === undefined || command === 'help' || isHelp(command)) {
       recordOverrides: record,
       shard,
       reportDir,
+      noReport,
       updateSnapshots,
       ci,
     });
@@ -54,6 +55,15 @@ if (command === undefined || command === 'help' || isHelp(command)) {
       console.error(error?.message ?? String(error));
     }
     process.exit(1);
+  }
+} else if (command === 'report') {
+  try {
+    const { input, format } = parseReportArgs(args);
+    const { renderReport } = await import('../src/reportCommand.js');
+    process.stdout.write(renderReport({ input, format }));
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exitCode = 1;
   }
 } else {
   // A command we do not know is a usage error, so it belongs on stderr with

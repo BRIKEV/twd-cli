@@ -170,6 +170,15 @@ describe('formatRunComplete', () => {
     expect(block).toContain('  Not run: 3');
   });
 
+  it('ends with the report path when given', () => {
+    const out = formatRunComplete({ testStatus: [], handlers: [], durationMs: 0, reportPath: '.twd/report/index.html' });
+    expect(out.split('\n').at(-1)).toBe('  Report: .twd/report/index.html');
+  });
+
+  it('prints no report line without a path', () => {
+    expect(formatRunComplete({ testStatus: [], handlers: [], durationMs: 0 })).not.toContain('Report:');
+  });
+
   it('omits the "Not run" line when notRun is 0', () => {
     const block = formatRunComplete({
       testStatus: [{ id: 't1', status: 'pass' }],
