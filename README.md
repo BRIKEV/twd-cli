@@ -1,6 +1,6 @@
 # twd-cli
 
-CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/) — executes your in-browser TWD tests in a headless environment. Puppeteer is only used to open the page; all tests run inside the real browser context against real DOM.
+CI/CD runner for [TWD (Test while developing)](https://brikev.github.io/twd/). It executes your in-browser TWD tests in a headless environment. Puppeteer is only used to open the page; all tests run inside the real browser context against real DOM.
 
 - [Installation](#installation)
 - [Usage](#usage): running tests, filtering, configuration
@@ -75,7 +75,7 @@ npx twd-cli run --test "Login" --test "Signup"
 Notes:
 
 - If no test matches any filter, the run exits with code `1` and prints
-  `No tests matched filter(s): …` — so a typo won't silently look like a pass.
+  `No tests matched filter(s): …`, so a typo won't silently look like a pass.
 - Code coverage collection is skipped while a `--test` filter is active, since a
   filtered run is a partial (debug) run.
 
@@ -95,12 +95,12 @@ npx twd-cli run --record --changed-since origin/main
 
 How the set is worked out:
 
-1. `git merge-base <ref> HEAD` for the base, falling back to `<ref>` itself —
-   a branch is not always a descendant of wherever the base has moved to.
+1. `git merge-base <ref> HEAD` for the base, falling back to `<ref>` itself,
+   because a branch is not always a descendant of wherever the base has moved to.
 2. `it()` titles on lines the branch **added**, in `*.twd.test.*` files only.
    The tests that already lived in the same file are noise, and pacing makes
    them expensive to record.
-3. If the diff added no `it()` at all, every title in the changed files —
+3. If the diff added no `it()` at all, every title in the changed files:
    a body can change without its title line moving, and recording nothing
    would be worse than recording a little too much.
 
@@ -112,7 +112,7 @@ committing first.
 Notes:
 
 - **A branch that changed no tests prints one line and exits `0`.** An empty
-  result is a normal CI outcome, not a failure — unlike `--test`, which is an
+  result is a normal CI outcome, not a failure, unlike `--test`, which is an
   assertion you typed and still exits `1` when it matches nothing. This is
   decided before the browser launches, so such a run needs no dev server at all.
 - **It unions with `--test`** rather than overriding it, so you can add one
@@ -120,7 +120,7 @@ Notes:
 - **The base branch has to be in the clone.** `actions/checkout` defaults to
   `fetch-depth: 1`, which fetches no history; set `fetch-depth: 0`. The error
   says so if you forget.
-- It is a filter, not a recording feature — `--record` is optional.
+- It is a filter, not a recording feature. `--record` is optional.
 
 ### Configuration
 
@@ -154,11 +154,11 @@ Create a `twd.config.json` file in your project root:
 | `headless` | boolean | `true` | Run browser in headless mode |
 | `puppeteerArgs` | string[] | `["--no-sandbox", "--disable-setuid-sandbox"]` | Additional Puppeteer launch arguments |
 | `retryCount` | number | `2` | Number of attempts per test before reporting failure. Set to `1` to disable retries |
-| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). Tests run in chunks via `runByIds`, so this bounds a **single chunk's browser call** (not the entire run) — raise it (e.g. `600000`) for slow CI or if individual chunks hang; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
+| `protocolTimeout` | number | `300000` | Puppeteer CDP `protocolTimeout` in ms (5 min). Tests run in chunks via `runByIds`, so this bounds a **single chunk's browser call** (not the entire run). Raise it (e.g. `600000`) for slow CI or if individual chunks hang; `0` means no timeout. Defaults above Puppeteer's implicit 180000ms ceiling |
 | `maxFailures` | number | `10` | Stop the run once this many tests have failed in total; the CLI prints the results gathered so far and exits non-zero. Set `0` to disable and always run every test |
 | `chunkSize` | number | `10` | How many tests run per browser call. Smaller values make the failure limit and timeouts more granular (less work lost if one chunk hangs); larger values reduce overhead. `0` runs everything in one call |
-| `contracts` | array | — | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
-| `contractReportPath` | string | — | Path to write a markdown report for CI/PR integration |
+| `contracts` | array | none | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
+| `contractReportPath` | string | none | Path to write a markdown report for CI/PR integration |
 | `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
 | `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin. See [layout snapshots](docs/layout-snapshots.md) |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
@@ -246,9 +246,9 @@ of those applied.
 
 `--test` matches a substring of the full `"suite > test"` path, so one filter can match several tests; re-running overwrites existing clips.
 
-mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser — and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
+mp4 recordings are converted to H.264 / `yuv420p` once the run ends, so they open in QuickTime, Preview and every browser, and land at roughly a quarter of the size. If your ffmpeg has no `libx264` the original is kept and you get a warning; that file is VP9 and plays only in Chrome or VLC.
 
-The recording viewport is **1280x1600** by default — deliberately taller than a screen. Puppeteer captures exactly the viewport, with no scrolling and no letterboxing, so anything below the fold is simply absent from the video and nothing in the run says so. A short default silently cropped the very content the tests asserted on. Set `record.viewport` if your app is shorter and you would rather not record empty space.
+The recording viewport is **1280x1600** by default, deliberately taller than a screen. Puppeteer captures exactly the viewport, with no scrolling and no letterboxing, so anything below the fold is simply absent from the video and nothing in the run says so. A short default silently cropped the very content the tests asserted on. Set `record.viewport` if your app is shorter and you would rather not record empty space.
 
 **A recorded run is a demo artifact, not a substitute for a CI run.** It sets its own viewport (1280x1600, versus the 1280x800 a normal run uses), reflows the app to full width, and pacing inserts real delays that can mask race conditions. Run CI unrecorded and record separately.
 
@@ -263,7 +263,7 @@ Flags: `--record`, `--record-dir <path>`, `--record-speed <n>`, `--record-pace <
 | `filename` | string \| null | `null` | Explicit name. When `null`, derived from the recorded tests. Setting it also records the whole run to one clip, since one name cannot address several |
 | `maxClips` | number | `20` | Most clips one run splits into. Past it the whole run goes to a single file. `0` disables the bound |
 | `format` | string | `"mp4"` | `"mp4"` (converted to H.264 after the run), `"webm"` or `"gif"` |
-| `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even — the H.264 conversion needs it |
+| `viewport` | object | `1280x1600` | Applied only when recording. `width` and `height` set the video dimensions. Tall on purpose: what is below the fold is not in the video. Keep both even: the H.264 conversion needs it |
 | `fps` | number | `30` | Capture frame rate |
 | `speed` | number | `1` | Post-hoc playback speed. Costs frame rate, prefer `pace` |
 | `pace` | number | `300` | Milliseconds held after each command. `0` disables |
@@ -276,9 +276,9 @@ Full explanations, including why `postRoll` is on by default and the measured fr
 
 ## How It Works
 
-**Important**: Puppeteer is **not** used as a testing framework here. It simply provides a headless browser to load your application — the same way a user would open Chrome. Once the page loads, all test execution happens inside the real browser context through the [TWD runner](https://brikev.github.io/twd/). Your tests interact with real DOM, real components, and real browser APIs — Puppeteer just opens the door and gets out of the way.
+**Important**: Puppeteer is **not** used as a testing framework here. It simply provides a headless browser to load your application, the same way a user would open Chrome. Once the page loads, all test execution happens inside the real browser context through the [TWD runner](https://brikev.github.io/twd/). Your tests interact with real DOM, real components, and real browser APIs. Puppeteer just opens the door and gets out of the way.
 
-**Contract Validation**: Mock overlaps are automatically handled — if multiple tests or calls use the same alias but with different HTTP methods/URLs/statuses, all are validated separately (no silent drops).
+**Contract Validation**: Mock overlaps are automatically handled: if multiple tests or calls use the same alias but with different HTTP methods/URLs/statuses, all are validated separately (no silent drops).
 
 1. Launches a headless browser via Puppeteer (the only thing Puppeteer does)
 2. Navigates to your dev server URL
@@ -369,7 +369,7 @@ known-good ffmpeg, records, and uploads the result:
     changed-since: ${{ github.event.pull_request.base.sha }}
 ```
 
-`changed-since` is what keeps the clip watchable — it records only the tests the
+`changed-since` is what keeps the clip watchable: it records only the tests the
 branch touched, rather than the whole suite. See
 [Running only what this branch changed](#running-only-what-this-branch-changed).
 
@@ -390,7 +390,7 @@ branch touched, rather than the whole suite. See
 
 | Output | Description |
 |--------|-------------|
-| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result** — a branch that changed no tests has nothing to record |
+| `clip-count` | Number of clips written. One per test when several tests match, one for the whole run when they do not (a single test, an explicit record.filename, or more tests than record.maxClips). **`0` is a valid, non-failing result**: a branch that changed no tests has nothing to record |
 | `dir` | Where the clips are, for a caller that wants to do its own upload |
 | `artifact-url` | URL of the artifact, when the action uploaded it |
 
@@ -398,7 +398,7 @@ branch touched, rather than the whole suite. See
 
 Because the distro build is not good enough, and finding that out the hard way is
 expensive. Puppeteer's screencast passes `-movflags hybrid_fragmented`, which
-arrived after ffmpeg 7 — `apt-get install ffmpeg` on `ubuntu-24.04` gets you
+arrived after ffmpeg 7, and `apt-get install ffmpeg` on `ubuntu-24.04` gets you
 6.1.1, which rejects it. The action installs an 8.1.x build whose `gpl` variant
 also carries `libx264`, which the H.264 conversion needs. Set
 `install-ffmpeg: false` if you manage your own; `twd-cli` checks the binary can
@@ -409,7 +409,7 @@ skips, so install ffmpeg 8+ yourself there.
 
 #### Reference workflow
 
-Recording is triggered by a label here, but that part is policy — record every PR
+Recording is triggered by a label here, but that part is policy: record every PR
 to `main` if you prefer. The trigger, the PR comment and the dev server stay in
 your workflow rather than the action, exactly as they do for `run`:
 
@@ -552,7 +552,7 @@ now appear in the [run report](#run-report)'s `summary.md` automatically.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `source` | string | — | Path to the OpenAPI spec file (JSON) |
+| `source` | string | none | Path to the OpenAPI spec file (JSON) |
 | `baseUrl` | string | `"/"` | Base URL prefix to strip when matching mock URLs to spec paths |
 | `mode` | `"error"` \| `"warn"` | `"warn"` | `error` fails the test run, `warn` reports but doesn't fail |
 | `strict` | boolean | `true` | When true, rejects unexpected properties not defined in the spec |
