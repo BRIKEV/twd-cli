@@ -35,6 +35,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      cpuThrottle: 1,
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
@@ -66,6 +67,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      cpuThrottle: 1,
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
@@ -90,6 +92,7 @@ describe('loadConfig', () => {
       protocolTimeout: 600000,
       maxFailures: 5,
       chunkSize: 20,
+      cpuThrottle: 6,
     };
 
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -126,6 +129,7 @@ describe('loadConfig', () => {
       protocolTimeout: 300000,
       maxFailures: 10,
       chunkSize: 10,
+      cpuThrottle: 1,
       viewport: { width: 1280, height: 800 },
       snapshotDir: '__twd_snapshots__',
       record: DEFAULT_RECORD,
@@ -182,6 +186,17 @@ describe('loadConfig', () => {
     const config = loadConfig();
     expect(config.maxFailures).toBe(10);
     expect(config.chunkSize).toBe(10);
+  });
+
+  it('defaults cpuThrottle to 1, which is full speed', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    expect(loadConfig().cpuThrottle).toBe(1);
+  });
+
+  it('lets the user set cpuThrottle for a slowed CI job', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ cpuThrottle: 4 }));
+    expect(loadConfig().cpuThrottle).toBe(4);
   });
 
   it('allows user to override maxFailures and chunkSize (0 disables bail)', () => {

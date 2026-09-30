@@ -179,6 +179,33 @@ describe('formatRunComplete', () => {
     expect(formatRunComplete({ testStatus: [], handlers: [], durationMs: 0 })).not.toContain('Report:');
   });
 
+  it('states the CPU throttle under the duration it explains', () => {
+    // A throttled run is slower by design, and a red one was red under a
+    // condition a normal run does not have. Neither may pass for an ordinary run.
+    const block = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'pass' }],
+      handlers,
+      durationMs: 42100,
+      cpuThrottle: 6,
+    });
+    expect(block).toBe(
+      '--- Run complete ---\n' +
+      '  Passed: 1 | Failed: 0 | Skipped: 0\n' +
+      '  Duration: 42.1s\n' +
+      '  CPU throttle: 6x'
+    );
+  });
+
+  it('prints no throttle line at full speed', () => {
+    const block = formatRunComplete({
+      testStatus: [{ id: 't1', status: 'pass' }],
+      handlers,
+      durationMs: 1000,
+      cpuThrottle: 1,
+    });
+    expect(block).not.toContain('CPU throttle');
+  });
+
   it('omits the "Not run" line when notRun is 0', () => {
     const block = formatRunComplete({
       testStatus: [{ id: 't1', status: 'pass' }],

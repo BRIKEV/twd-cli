@@ -24,7 +24,7 @@ if (command === undefined || command === 'help' || isHelp(command)) {
   console.log(USAGE[command]());
 } else if (command === 'run') {
   try {
-    const { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci } =
+    const { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci, cpuThrottle } =
       parseRunArgs(args);
     const { runTests } = await import('../src/index.js');
     const hasFailures = await runTests({
@@ -36,6 +36,7 @@ if (command === undefined || command === 'help' || isHelp(command)) {
       noReport,
       updateSnapshots,
       ci,
+      cpuThrottle,
     });
     process.exit(hasFailures ? 1 : 0);
   } catch (error) {

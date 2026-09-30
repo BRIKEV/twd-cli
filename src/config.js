@@ -73,6 +73,9 @@ const DEFAULT_CONFIG = {
   protocolTimeout: 300000,
   maxFailures: 10,
   chunkSize: 10,
+  // How many times slower the browser's CPU runs. 1 is full speed, and any
+  // value below 1 is refused before the browser launches.
+  cpuThrottle: 1,
   viewport: DEFAULT_VIEWPORT,
   // Must match the `dir` given to the twdSnapshot vite plugin. Two processes
   // that never talk to each other, so this duplication cannot be designed away.

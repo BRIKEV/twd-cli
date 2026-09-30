@@ -83,6 +83,13 @@ describe("twd-cli help", () => {
     expect(stderr).toMatch(/Did you mean --test\?/);
   });
 
+  it("run with a --cpu-throttle below 1 refuses to run: stderr names it, exit 1", async () => {
+    const { code, stdout, stderr } = await cli("run", "--cpu-throttle", "0");
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/Invalid --cpu-throttle: expected a rate of 1 or more, got "0"/);
+  });
+
   it("an unknown command is a usage error: stderr, exit 1", async () => {
     const { code, stdout, stderr } = await cli("bogus");
     expect(code).toBe(1);

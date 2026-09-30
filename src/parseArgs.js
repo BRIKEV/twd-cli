@@ -1,4 +1,5 @@
 import { parseShardSpec } from './shard.js';
+import { parseCpuThrottle } from './cpuThrottle.js';
 
 // Every flag each parser recognises. src/usage.js has to describe all of
 // them, and tests/usage.test.js checks that it does.
@@ -14,6 +15,7 @@ export const RUN_FLAGS = [
   '--record-dir',
   '--record-speed',
   '--record-pace',
+  '--cpu-throttle',
 ];
 
 export const MERGE_FLAGS = ['--out'];
@@ -99,6 +101,9 @@ export function parseRunArgs(argv) {
   let reportDir = null;
   let noReport = false;
   let changedSince = null;
+  // null, not 1, when absent: the flag overrides cpuThrottle in the config, so
+  // a default here would shadow it.
+  let cpuThrottle = null;
   // Two separate flags on purpose, the way Jest separates them. They close two
   // different holes: --update-snapshots rewrites references that already exist,
   // --ci forbids creating one that does not. The precedence between them is
@@ -158,6 +163,13 @@ export function parseRunArgs(argv) {
         record.pace = parsed;
       }
       i += consumed - 1;
+    } else if (token === '--cpu-throttle' || token.startsWith('--cpu-throttle=')) {
+      const { value, consumed } = readValue(argv, token, '--cpu-throttle', i);
+      // Throws, like --shard and unlike the two recording numbers above: a
+      // rate that was silently dropped is a full-speed run the caller believes
+      // was throttled.
+      cpuThrottle = parseCpuThrottle(value, '--cpu-throttle');
+      i += consumed - 1;
     } else if (token.startsWith('--')) {
       unknown.push(token);
     }
@@ -165,7 +177,7 @@ export function parseRunArgs(argv) {
 
   if (unknown.length) throw unknownOptionsError('run', unknown, RUN_FLAGS);
 
-  return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci };
+  return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci, cpuThrottle };
 }
 
 // `twd-cli report [<dir|run.json>] [--format <f>]`.
