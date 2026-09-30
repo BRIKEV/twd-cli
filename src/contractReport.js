@@ -33,7 +33,11 @@ export function printContractReport(output) {
     bySource.get(key).push(result);
   }
 
+  // Passing mocks and skips are counted, not listed: run.json and index.html hold the detail.
   for (const [source, sourceResults] of bySource) {
+    const noisy = sourceResults.filter((r) => !r.validation.valid || r.validation.warnings.length > 0);
+    if (noisy.length === 0) continue;
+
     const mode = sourceResults[0]?.mode || 'warn';
     const modeLabel = mode === 'error'
       ? bgRed(` ${mode.toUpperCase()} `)
@@ -41,7 +45,7 @@ export function printContractReport(output) {
     console.log(`${cyan('Source:')} ${source}  ${modeLabel}`);
     console.log('');
 
-    for (const result of sourceResults) {
+    for (const result of noisy) {
       const failColor = result.mode === 'error' ? boldRed : boldYellow;
       const detailColor = result.mode === 'error' ? red : yellow;
 
@@ -55,8 +59,6 @@ export function printContractReport(output) {
         if (result.mode === 'error') {
           hasContractErrors = true;
         }
-      } else if (result.validation.warnings.length === 0) {
-        console.log(green(`  MOCK ✓ ${result.method} ${result.matchedPath} (${result.status}) — ${formatMockLabel(result)}`));
       }
 
       for (const warning of result.validation.warnings) {
@@ -66,15 +68,6 @@ export function printContractReport(output) {
         console.log('');
       }
     }
-  }
-
-  if (skipped.length > 0) {
-    console.log(dim('Skipped:'));
-    for (const skip of skipped) {
-      console.log(dim(`  MOCK ℹ "${skip.alias}" — ${skip.url}`));
-      console.log(dim(`    ${skip.reason === 'urlRegex mock' ? 'Regex URL pattern' : 'No matching path in any spec'}`));
-    }
-    console.log('');
   }
 
   const validatedCount = results.length;

@@ -37,6 +37,38 @@ describe('printContractReport', () => {
     const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
     expect(logs).toContain('All mocks match');
     expect(logs).toContain('Mocks validated: 1');
+    expect(logs).not.toContain('✓');
+    expect(logs).not.toContain('Source:');
+  });
+
+  it('prints a source header only for sources with errors or warnings', () => {
+    const pass = (specSource) => ({
+      alias: 'getPets', method: 'GET', status: 200, specSource, matchedPath: '/v1/pets', mode: 'warn',
+      validation: { valid: true, errors: [], warnings: [] },
+    });
+    const output = {
+      results: [
+        pass('./clean.json'),
+        pass('./noisy.json'),
+        {
+          alias: 'createPet', method: 'POST', status: 201, specSource: './noisy.json', matchedPath: '/v1/pets', mode: 'warn',
+          validation: {
+            valid: false,
+            errors: [{ path: 'response.id', message: 'expected integer, got string', keyword: 'type' }],
+            warnings: [],
+          },
+        },
+      ],
+      skipped: [],
+    };
+
+    printContractReport(output);
+
+    const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
+    expect(logs).toContain('Source: ./noisy.json');
+    expect(logs).not.toContain('./clean.json');
+    expect(logs).not.toContain('GET /v1/pets');
+    expect(logs).toContain('Mocks validated: 3');
   });
 
   it('prints errors with ✗ symbol', () => {
@@ -98,7 +130,7 @@ describe('printContractReport', () => {
     expect(logs).toContain('Warnings: 1');
   });
 
-  it('prints skipped mocks with ℹ symbol', () => {
+  it('counts skipped mocks without listing them', () => {
     const output = {
       results: [],
       skipped: [
@@ -109,8 +141,9 @@ describe('printContractReport', () => {
     printContractReport(output);
 
     const logs = stripAnsi(consoleSpy.mock.calls.map(c => c[0]).join('\n'));
-    expect(logs).toContain('ℹ');
-    expect(logs).toContain('adyenSetup');
+    expect(logs).not.toContain('ℹ');
+    expect(logs).not.toContain('adyenSetup');
+    expect(logs).not.toContain('Skipped:\n');
     expect(logs).toContain('Skipped: 1');
   });
 
@@ -198,7 +231,7 @@ describe('printContractReport', () => {
           mode: 'warn',
           testName: 'Cart > should load items',
           occurrence: 1,
-          validation: { valid: true, errors: [], warnings: [] },
+          validation: { valid: true, errors: [], warnings: [{ type: 'UNMATCHED_STATUS', message: 'Status 200 not documented' }] },
         },
       ],
       skipped: [],
@@ -264,7 +297,7 @@ describe('printContractReport', () => {
 
     const lines = consoleSpy.mock.calls.map((c) => stripAnsi(c[0]));
     const glyphLines = lines.filter((l) => /^\s*(MOCK\s+)?[✓✗⚠ℹ]/.test(l));
-    expect(glyphLines.length).toBeGreaterThanOrEqual(4);
+    expect(glyphLines.length).toBe(2);
     for (const line of glyphLines) {
       expect(line).toMatch(/^\s*MOCK [✓✗⚠ℹ]/);
     }
@@ -283,7 +316,7 @@ describe('printContractReport', () => {
           mode: 'warn',
           testName: 'Cart > should load items',
           occurrence: 2,
-          validation: { valid: true, errors: [], warnings: [] },
+          validation: { valid: true, errors: [], warnings: [{ type: 'UNMATCHED_STATUS', message: 'Status 200 not documented' }] },
         },
       ],
       skipped: [],
