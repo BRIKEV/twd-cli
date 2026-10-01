@@ -90,7 +90,8 @@ jobs:
           cat .twd/contract-report.md
 
       - name: Post contract report to PR
-        if: github.event_name == 'pull_request'
+        # A fork PR gets a read-only token, so commenting would fail the job.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         working-directory: test-example-app
         env:
           GH_TOKEN: ${{ github.token }}
