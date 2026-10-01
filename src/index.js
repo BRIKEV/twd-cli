@@ -14,6 +14,7 @@ import { orderedTestIds, chunk } from './testOrder.js';
 import { resolveRecordFilename } from './recordFilename.js';
 import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
+import { parseCpuThrottle } from './cpuThrottle.js';
 import { buildRunReport } from './runReport.js';
 import {
   cleanReportDir, copySnapshotCaptures, writeReportFolder,
@@ -66,6 +67,7 @@ export async function runTests(options = {}) {
     noReport = false,
     updateSnapshots = false,
     ci = false,
+    cpuThrottle = null,
   } = options;
   const sharded = Boolean(shard);
   let browser;
@@ -85,6 +87,7 @@ export async function runTests(options = {}) {
   let filteredIds = [];
   let executed = 0;
   let stoppedEarly = false;
+  let throttleRate = 1;
   const recordingInfos = [];
 
   // Stops the screencast at most once. Must always run before browser.close():
@@ -193,6 +196,12 @@ export async function runTests(options = {}) {
       console.warn('Warning: contractReportPath is deprecated and will be removed; the report folder\'s summary.md carries contract results.');
     }
 
+    // Before anything launches, and before --changed-since can return early.
+    // The config value is checked even when the flag overrides it: otherwise a
+    // bad one only fails the runs nobody passes a flag to, which is CI.
+    const configThrottle = parseCpuThrottle(config.cpuThrottle ?? 1, '"cpuThrottle" in twd.config.json');
+    throttleRate = cpuThrottle ?? configThrottle;
+
     // Resolved before anything else, including the ffmpeg probe: a branch that
     // changed no tests then needs neither a browser, nor a dev server, nor
     // ffmpeg. That is the step this deletes from every caller's workflow, which
@@ -237,6 +246,15 @@ export async function runTests(options = {}) {
     });
 
     const page = await browser.newPage();
+
+    // Before the navigation, so the app boots throttled as well: a race is as
+    // likely in the first render as anywhere in a test.
+    if (throttleRate > 1) {
+      await page.emulateCPUThrottling(throttleRate);
+      console.log(
+        `CPU throttling: ${throttleRate}x (the browser runs ${throttleRate} times slower; the dev server does not).`
+      );
+    }
 
     // Every run gets an explicit viewport, not just a recorded one. Layout
     // snapshots are only reproducible if the size is fixed and stated: relying
@@ -699,6 +717,7 @@ export async function runTests(options = {}) {
       stoppedEarly,
       maxFailures: config.maxFailures,
       reportPath,
+      cpuThrottle: throttleRate,
     }));
 
     return hasFailures;
@@ -715,6 +734,7 @@ export async function runTests(options = {}) {
         handlers: partialHandlers,
         durationMs,
         reportPath,
+        cpuThrottle: throttleRate,
       }));
       console.log('\nRun interrupted before completion — results above are partial.');
     }

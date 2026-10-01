@@ -73,6 +73,7 @@ function createMockPage({ handlers = [], testStatus = [], recorder } = {}) {
     exposeFunction: vi.fn(),
     evaluateOnNewDocument: vi.fn(),
     setViewport: vi.fn(),
+    emulateCPUThrottling: vi.fn(),
     addStyleTag: vi.fn(),
     screencast: vi.fn().mockResolvedValue(recorder ?? createMockRecorder()),
   };
@@ -2537,5 +2538,158 @@ describe("runTests --changed-since", () => {
     await runTests();
 
     expect(resolveChangedTitles).not.toHaveBeenCalled();
+  });
+});
+
+describe("runTests CPU throttling", () => {
+  let logSpy;
+
+  const oneTestPage = (overrides = {}) => createMockPage({
+    handlers: [{ id: '1', name: 'test1', type: 'test' }],
+    testStatus: [{ id: '1', status: 'pass' }],
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("throttles the page before navigating, so the app boots throttled too", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6 });
+    const page = oneTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.emulateCPUThrottling).toHaveBeenCalledWith(6);
+    expect(page.emulateCPUThrottling.mock.invocationCallOrder[0])
+      .toBeLessThan(page.goto.mock.invocationCallOrder[0]);
+  });
+
+  it("does not touch throttling when the config has no cpuThrottle", async () => {
+    const page = oneTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.emulateCPUThrottling).not.toHaveBeenCalled();
+  });
+
+  it("does not touch throttling at the default of 1", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 1 });
+    const page = oneTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.emulateCPUThrottling).not.toHaveBeenCalled();
+  });
+
+  it("lets --cpu-throttle override the config", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6 });
+    const page = oneTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ cpuThrottle: 2 });
+
+    expect(page.emulateCPUThrottling).toHaveBeenCalledTimes(1);
+    expect(page.emulateCPUThrottling).toHaveBeenCalledWith(2);
+  });
+
+  it("lets --cpu-throttle 1 run a throttled config at full speed", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6 });
+    const page = oneTestPage();
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ cpuThrottle: 1 });
+
+    expect(page.emulateCPUThrottling).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 0.5, 'fast'])("refuses a configured cpuThrottle of %j before launching the browser", async (value) => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: value });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests()).rejects.toThrow(/Invalid "cpuThrottle" in twd\.config\.json/);
+
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("refuses a bad configured rate even when the flag overrides it", async () => {
+    // Otherwise the config is only checked on the runs nobody passes a flag
+    // to, which is CI, which is where finding out is most expensive.
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 0 });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runTests({ cpuThrottle: 4 })).rejects.toThrow(/Invalid "cpuThrottle"/);
+
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("says the run is throttled before it navigates", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6 });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(oneTestPage()));
+
+    await runTests();
+
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    const header = logs.findIndex((l) => l.startsWith('CPU throttling: 6x'));
+    const navigating = logs.findIndex((l) => l.startsWith('Navigating to'));
+    expect(header).toBeGreaterThanOrEqual(0);
+    expect(header).toBeLessThan(navigating);
+  });
+
+  it("states the throttle in the run-complete block", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6 });
+    puppeteer.launch.mockResolvedValue(createMockBrowser(oneTestPage()));
+
+    await runTests();
+
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    const block = logs.find((l) => l.startsWith('--- Run complete ---'));
+    expect(block).toContain('  CPU throttle: 6x');
+  });
+
+  it("states the throttle in the partial block of an interrupted run", async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, cpuThrottle: 6, chunkSize: 1 });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const page = oneTestPage({
+      handlers: [
+        { id: 't1', name: 't1', type: 'test' },
+        { id: 't2', name: 't2', type: 'test' },
+      ],
+    });
+    page.evaluate = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 't1', name: 't1', type: 'test' },
+        { id: 't2', name: 't2', type: 'test' },
+      ])
+      .mockResolvedValueOnce([{ id: 't1', status: 'pass' }])
+      .mockRejectedValueOnce(new Error('Runtime.callFunctionOn timed out.'));
+    puppeteer.launch.mockResolvedValue(createMockBrowser(page));
+
+    await expect(runTests()).rejects.toThrow('timed out');
+
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    const block = logs.find((l) => l.startsWith('--- Run complete ---'));
+    expect(block).toContain('  CPU throttle: 6x');
+    errorSpy.mockRestore();
+  });
+
+  it("prints nothing about throttling at full speed", async () => {
+    puppeteer.launch.mockResolvedValue(createMockBrowser(oneTestPage()));
+
+    await runTests();
+
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => /CPU throttl/.test(l))).toBe(false);
   });
 });

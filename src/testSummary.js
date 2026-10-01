@@ -26,6 +26,7 @@ export function formatRunComplete({
   shards = null,
   computeMs = null,
   reportPath = null,
+  cpuThrottle = 1,
 }) {
   const passed = testStatus.filter((t) => t.status === 'pass').length;
   const failed = testStatus.filter((t) => t.status === 'fail').length;
@@ -50,6 +51,9 @@ export function formatRunComplete({
   } else {
     lines.push(`  Duration: ${duration}s`);
   }
+  // Right under the duration it inflates. Only when active, so an unthrottled
+  // block stays exactly what it has always been.
+  if (cpuThrottle > 1) lines.push(`  CPU throttle: ${cpuThrottle}x`);
 
   const failures = testStatus.filter((t) => t.status === 'fail');
   if (failures.length > 0) {

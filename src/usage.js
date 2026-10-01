@@ -57,6 +57,12 @@ Filtering:
                          base branch in the clone: in GitHub Actions set
                          fetch-depth: 0 on actions/checkout.
 
+CPU throttling:
+  --cpu-throttle <rate>  Slow the browser's CPU down <rate> times, e.g. 6, to
+                         reproduce a timing flake that only a slow CI runner
+                         shows. Overrides cpuThrottle in twd.config.json
+                         (default 1, full speed). Below 1 is refused.
+
 Sharding (beta):
   --shard <i>/<n>        Run slice i of n. Each shard discovers the whole
                          suite and takes every nth test, so the count never
@@ -87,6 +93,7 @@ Examples:
   npx twd-cli run --test "Login" --test "Signup"
   npx twd-cli run --record --changed-since origin/main
   npx twd-cli run --shard 2/4
+  npx twd-cli run --cpu-throttle 6 --test "checkout flow"
 
 Create a twd.config.json file in your project root to customize settings.
 `;

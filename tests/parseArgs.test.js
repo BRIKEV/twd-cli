@@ -3,7 +3,7 @@ import { parseRunArgs, parseMergeArgs, parseReportArgs } from "../src/parseArgs.
 
 describe("parseRunArgs", () => {
   it("returns empty filters when no args", () => {
-    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false });
+    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null });
   });
 
   it("parses a single --test <value>", () => {
@@ -16,6 +16,7 @@ describe("parseRunArgs", () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
@@ -29,6 +30,7 @@ describe("parseRunArgs", () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
@@ -42,11 +44,12 @@ describe("parseRunArgs", () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
   it("ignores a trailing --test with no value", () => {
-    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false });
+    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null });
   });
 
   it("ignores positional tokens", () => {
@@ -96,6 +99,7 @@ describe("parseRunArgs", () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
@@ -132,6 +136,7 @@ describe("parseRunArgs", () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
@@ -171,6 +176,7 @@ describe('parseRunArgs shard and report flags', () => {
       noReport: false,
       updateSnapshots: false,
       ci: false,
+      cpuThrottle: null,
     });
   });
 
@@ -246,6 +252,55 @@ describe('parseRunArgs --changed-since', () => {
 
     expect(result.changedSince).toBe('main');
     expect(result.testFilters).toEqual(['Login']);
+  });
+});
+
+describe('parseRunArgs --cpu-throttle', () => {
+  it('parses --cpu-throttle in both forms', () => {
+    expect(parseRunArgs(['--cpu-throttle', '6']).cpuThrottle).toBe(6);
+    expect(parseRunArgs(['--cpu-throttle=6']).cpuThrottle).toBe(6);
+  });
+
+  it('defaults to null when the flag is absent, so the config still applies', () => {
+    // Not 1: `flag ?? config` would then never reach twd.config.json.
+    expect(parseRunArgs([]).cpuThrottle).toBeNull();
+  });
+
+  it('accepts a fractional rate, and 1 to force full speed over the config', () => {
+    expect(parseRunArgs(['--cpu-throttle', '2.5']).cpuThrottle).toBe(2.5);
+    expect(parseRunArgs(['--cpu-throttle', '1']).cpuThrottle).toBe(1);
+  });
+
+  it('throws on a rate below 1 instead of ignoring it', () => {
+    // Unlike --record-speed and --record-pace, which drop a bad value. A
+    // dropped rate is a full-speed run the caller believes is throttled.
+    expect(() => parseRunArgs(['--cpu-throttle', '0'])).toThrow(/Invalid --cpu-throttle/);
+    expect(() => parseRunArgs(['--cpu-throttle=0.5'])).toThrow(/Invalid --cpu-throttle/);
+    expect(() => parseRunArgs(['--cpu-throttle', 'fast'])).toThrow(/Invalid --cpu-throttle/);
+  });
+
+  it('accepts -1 as the value, then refuses it for being below 1', () => {
+    // Single dash, so readValue takes it as the value rather than a flag.
+    expect(() => parseRunArgs(['--cpu-throttle', '-1'])).toThrow(/got "-1"/);
+  });
+
+  it('throws on a trailing --cpu-throttle with no value', () => {
+    expect(() => parseRunArgs(['--cpu-throttle'])).toThrow(/Invalid --cpu-throttle.*got nothing/);
+  });
+
+  it('throws rather than swallowing the flag that follows a valueless --cpu-throttle', () => {
+    expect(() => parseRunArgs(['--cpu-throttle', '--test', 'Login'])).toThrow(/got nothing/);
+  });
+
+  it('combines with --test', () => {
+    const result = parseRunArgs(['--cpu-throttle', '6', '--test', 'checkout']);
+
+    expect(result.cpuThrottle).toBe(6);
+    expect(result.testFilters).toEqual(['checkout']);
+  });
+
+  it('suggests --cpu-throttle for a near miss', () => {
+    expect(() => parseRunArgs(['--cpu-throtle', '6'])).toThrow(/Did you mean --cpu-throttle\?/);
   });
 });
 
