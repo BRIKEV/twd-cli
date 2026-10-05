@@ -1,3 +1,5 @@
+import { isFlaky } from './repeat.js';
+
 function byRunOrder(a, b) {
   return (a.index ?? Infinity) - (b.index ?? Infinity);
 }
@@ -25,6 +27,7 @@ export function needsAttention(report) {
     // so match that exact form instead.
     const at = snapshots.findIndex((s) => String(test.error ?? '').includes(`${s.name}.failed.png`));
     const snapshot = at === -1 ? null : snapshots.splice(at, 1)[0];
+    const repeated = typeof test.runs === 'number';
     return {
       kind: 'test',
       path: test.path ?? test.id,
@@ -32,6 +35,7 @@ export function needsAttention(report) {
       attempts: test.attempts ?? 1,
       recording: test.recording ?? null,
       snapshot,
+      ...(repeated ? { runs: test.runs, passes: test.passes ?? 0, flaky: isFlaky(test) } : {}),
     };
   });
 

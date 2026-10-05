@@ -26,6 +26,24 @@ describe('renderHtml', () => {
     expect(html).not.toContain('Needs attention');
   });
 
+  it('shows a flaky test under needs attention with its pass count', () => {
+    const html = renderHtml(report({
+      repeat: 10,
+      tests: [{ id: 't1', status: 'fail', error: 'boom', runs: 10, passes: 8, skips: 0 }],
+    }));
+    expect(html).toContain('Needs attention (1)');
+    expect(html).toContain('flaky · 8/10 passed');
+    expect(html).toContain('>10<');
+  });
+
+  it('shows a pass count for a test that failed every round without calling it flaky', () => {
+    const html = renderHtml(report({
+      tests: [{ id: 't1', status: 'fail', error: 'boom', runs: 10, passes: 0, skips: 0 }],
+    }));
+    expect(html).toContain('0/10 passed');
+    expect(html).not.toContain('flaky');
+  });
+
   it('puts a contract error next to test failures', () => {
     const html = renderHtml(report({ contracts: { results: [contractResult({ validation: invalid() })] } }));
     expect(html).toContain('Needs attention (1)');

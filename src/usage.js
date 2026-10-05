@@ -63,6 +63,15 @@ CPU throttling:
                          shows. Overrides cpuThrottle in twd.config.json
                          (default 1, full speed). Below 1 is refused.
 
+Repeating:
+  --repeat <n>           Run the selected tests <n> times in this browser,
+                         reloading the page between rounds, and list each test
+                         that failed a round with how often it passed. <n> is
+                         a positive integer. Retries are off for the run.
+                         maxFailures counts tests that failed, not each failed
+                         round. Cannot be combined with --record or --shard.
+                         Exits 1 if any round of any test failed.
+
 Sharding (beta):
   --shard <i>/<n>        Run slice i of n. Each shard discovers the whole
                          suite and takes every nth test, so the count never
@@ -94,6 +103,7 @@ Examples:
   npx twd-cli run --record --changed-since origin/main
   npx twd-cli run --shard 2/4
   npx twd-cli run --cpu-throttle 6 --test "checkout flow"
+  npx twd-cli run --repeat 10 --cpu-throttle 6 --test "checkout flow"
 
 Create a twd.config.json file in your project root to customize settings.
 `;

@@ -15,6 +15,7 @@ import { resolveRecordFilename } from './recordFilename.js';
 import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
 import { parseCpuThrottle } from './cpuThrottle.js';
+import { recordRound, failedTestCount, tallyToStatus } from './repeat.js';
 import { buildRunReport } from './runReport.js';
 import {
   cleanReportDir, copySnapshotCaptures, writeReportFolder,
@@ -57,6 +58,20 @@ function recordedFileSize(absPath) {
   }
 }
 
+// Passed to page.evaluate, so it runs in the page: `window` is the app, not Node.
+// Reloading between --repeat rounds mints new test ids, and both loads have to
+// read the registry the same way.
+function readRegisteredHandlers() {
+  const state = window.__TWD_STATE__;
+  if (!state || !state.handlers) return [];
+  return Array.from(state.handlers.values()).map((h) => ({
+    id: h.id,
+    name: h.name,
+    parent: h.parent,
+    type: h.type,
+  }));
+}
+
 export async function runTests(options = {}) {
   const {
     testFilters = [],
@@ -68,7 +83,10 @@ export async function runTests(options = {}) {
     updateSnapshots = false,
     ci = false,
     cpuThrottle = null,
+    repeat = null,
   } = options;
+  const repeatCount = repeat ?? 1;
+  const repeating = repeatCount > 1;
   const sharded = Boolean(shard);
   let browser;
   let config;
@@ -140,7 +158,8 @@ export async function runTests(options = {}) {
         executed,
         notRun: 0,
         stoppedEarly,
-        retryCount: config.retryCount,
+        retryCount: repeating ? 1 : config.retryCount,
+        repeat: repeating ? repeatCount : null,
         version: cliVersion(),
         url: config.url,
         snapshots,
@@ -202,6 +221,20 @@ export async function runTests(options = {}) {
     const configThrottle = parseCpuThrottle(config.cpuThrottle ?? 1, '"cpuThrottle" in twd.config.json');
     throttleRate = cpuThrottle ?? configThrottle;
 
+    // config.record can be a shared default object; copy instead of mutating it.
+    // Resolved before --changed-since returns: --repeat with --record or --shard
+    // is a usage error even on a branch that changed no tests, and it has to
+    // fail before the ffmpeg probe or the browser launch.
+    const record = { ...(config.record || {}), ...recordOverrides };
+    const recording = Boolean(record.enabled);
+    if (!record.dir) record.dir = path.join(reportOptions?.dir ?? DEFAULT_REPORT_DIR, RECORDINGS_DIR);
+    if (repeating && (sharded || recording)) {
+      const conflict = [sharded ? '--shard' : null, recording ? '--record' : null].filter(Boolean).join(' and ');
+      const error = new Error(`twd-cli run: --repeat cannot be combined with ${conflict}.`);
+      error.usage = true;
+      throw error;
+    }
+
     // Resolved before anything else, including the ffmpeg probe: a branch that
     // changed no tests then needs neither a browser, nor a dev server, nor
     // ffmpeg. That is the step this deletes from every caller's workflow, which
@@ -220,19 +253,18 @@ export async function runTests(options = {}) {
         `Changed since ${changedSince}: ${changedTitles.length} test title(s) to match.`
       );
     }
-    // config.record can be a shared default object; copy instead of mutating it.
-    const record = { ...(config.record || {}), ...recordOverrides };
-    const recording = Boolean(record.enabled);
-    if (!record.dir) record.dir = path.join(reportOptions?.dir ?? DEFAULT_REPORT_DIR, RECORDINGS_DIR);
-
     if (recording) {
       assertFfmpegCapable(record.ffmpegPath, record.format);
       ffmpegLog = createFfmpegLog();
     }
 
-    // Load contract validators if configured
+    // Load contract validators if configured. --repeat skips them: a contract
+    // checked across n reloads is a different question, and out of scope here.
     let contractValidators = [];
-    if (config.contracts && config.contracts.length > 0) {
+    const contractsConfigured = Boolean(config.contracts && config.contracts.length > 0);
+    if (repeating && contractsConfigured) {
+      console.log('Skipping contract validation (--repeat).');
+    } else if (contractsConfigured) {
       contractValidators = await loadContracts(config.contracts, workingDir);
     }
 
@@ -266,7 +298,7 @@ export async function runTests(options = {}) {
     // Register mock collector for contract validation
     const collectedMocks = new Map();
     const occurrenceCounters = new Map();
-    if (config.contracts && config.contracts.length > 0) {
+    if (!repeating && config.contracts && config.contracts.length > 0) {
       await page.exposeFunction('__twdCollectMock', (mock) => {
         const occKey = `${mock.alias}:${mock.testId}`;
         const count = (occurrenceCounters.get(occKey) || 0) + 1;
@@ -301,16 +333,7 @@ export async function runTests(options = {}) {
     }
 
     // Enumerate registered handlers (for the count line and --test filtering)
-    const registeredHandlers = await page.evaluate(() => {
-      const state = window.__TWD_STATE__;
-      if (!state || !state.handlers) return [];
-      return Array.from(state.handlers.values()).map((h) => ({
-        id: h.id,
-        name: h.name,
-        parent: h.parent,
-        type: h.type,
-      }));
-    });
+    const registeredHandlers = await page.evaluate(readRegisteredHandlers);
     partialHandlers = registeredHandlers;
 
     // The full discovered order, before any filtering. Computed here, ahead of
@@ -491,81 +514,135 @@ export async function runTests(options = {}) {
     partialStatus = [];
     let recordingFailed = false;
     let recordingAbandoned = false;
-    const seenIds = new Set();
 
-    for (const ids of chunks) {
-      let chunkClip = null;
-      if (perTest && !recordingFailed) {
-        const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
-        chunkClip = await startClip(testNames);
-      } else if (perTest && !recordingAbandoned) {
-        // Every further clip would stop against the same dead encoder, each one
-        // racing the 30s deadline, so maxClips stalls replace one. The tests keep
-        // running: a broken encoder must not swallow their results.
-        recordingAbandoned = true;
-        console.error('Recording stopped for the rest of the run. The remaining tests still run, unrecorded.');
-      }
+    // One in-page callback for every chunk. --repeat passes attemptCount 1:
+    // retryCount counts attempts, and a second attempt is the flake this flag
+    // exists to see. 0 is not "no retries" — the in-page onFail then reads
+    // err.message off null and the chunk throws.
+    const runChunk = (ids, attemptCount) => page.evaluate(async (retryCount, chunkIds) => {
+      const TestRunner = window.__testRunner;
+      const testStatus = [];
+      const runner = new TestRunner({
+        onStart: (test) => {
+          test.status = "running";
+        },
+        onPass: (test, retryAttempt) => {
+          test.status = "done";
+          const entry = { id: test.id, status: "pass" };
+          if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
+          testStatus.push(entry);
+        },
+        onFail: (test, err) => {
+          test.status = "done";
+          // The raw snapshot travels out; src/failureDiagnostics.js renders
+          // it in Node. This callback is serialised into the page and has no
+          // module scope, so it cannot reach a formatter, and duplicating one
+          // here would be a copy that drifts. `undefined` on a twd-js without
+          // diagnostics support, and dropped by serialisation.
+          testStatus.push({
+            id: test.id,
+            status: "fail",
+            diagnostics: test.diagnostics,
+            error: `${err.message} (at ${window.location.href})`,
+          });
+        },
+        onSkip: (test) => {
+          test.status = "done";
+          testStatus.push({ id: test.id, status: "skip" });
+        },
+      }, { retryCount });
+      await runner.runByIds(chunkIds);
+      return testStatus;
+    }, attemptCount, ids);
 
-      const chunkStatus = await page.evaluate(async (retryCount, chunkIds) => {
-        const TestRunner = window.__testRunner;
-        const testStatus = [];
-        const runner = new TestRunner({
-          onStart: (test) => {
-            test.status = "running";
-          },
-          onPass: (test, retryAttempt) => {
-            test.status = "done";
-            const entry = { id: test.id, status: "pass" };
-            if (retryAttempt !== undefined) entry.retryAttempt = retryAttempt;
-            testStatus.push(entry);
-          },
-          onFail: (test, err) => {
-            test.status = "done";
-            // The raw snapshot travels out; src/failureDiagnostics.js renders
-            // it in Node. This callback is serialised into the page and has no
-            // module scope, so it cannot reach a formatter, and duplicating one
-            // here would be a copy that drifts. `undefined` on a twd-js without
-            // diagnostics support, and dropped by serialisation.
-            testStatus.push({
-              id: test.id,
-              status: "fail",
-              diagnostics: test.diagnostics,
-              error: `${err.message} (at ${window.location.href})`,
-            });
-          },
-          onSkip: (test) => {
-            test.status = "done";
-            testStatus.push({ id: test.id, status: "skip" });
-          },
-        }, { retryCount });
-        await runner.runByIds(chunkIds);
-        return testStatus;
-      }, config.retryCount, ids);
+    if (repeating) {
+      // Ids are random per page load, so each round reloads, re-enumerates and
+      // joins results by registration index rather than by id.
+      console.log(`Repeating each test ${repeatCount} times; retries are off for this run.`);
+      const tally = new Map();
+      let handlersNow = registeredHandlers;
+      let orderedNow = allTestIds;
+      let selection = baseIds;
 
-      for (const entry of chunkStatus) {
-        if (seenIds.has(entry.id)) continue;
-        seenIds.add(entry.id);
-        partialStatus.push(entry);
-      }
-      executed += ids.length;
+      for (let round = 1; round <= repeatCount && !stoppedEarly; round++) {
+        if (round > 1) {
+          console.log(`Repeat ${round}/${repeatCount}: reloading ${config.url} ...`);
+          await page.goto(config.url);
+          await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
+          handlersNow = await page.evaluate(readRegisteredHandlers);
+          partialHandlers = handlersNow;
+          const activeFilters = changedTitles ? [...testFilters, ...changedTitles] : testFilters;
+          orderedNow = orderedTestIds(handlersNow);
+          allTestIds = orderedNow;
+          if (activeFilters.length > 0) {
+            const { ids } = selectTestIds(handlersNow, activeFilters);
+            if (ids.length === 0) {
+              throw new Error(`Repeat ${round}/${repeatCount}: no tests matched after reload.`);
+            }
+            selection = ids;
+            filteredIds = ids;
+          } else {
+            selection = orderedNow;
+            filteredIds = orderedNow;
+          }
+        }
 
-      let bail = false;
-      if (config.maxFailures > 0) {
-        const failed = partialStatus.filter((t) => t.status === 'fail').length;
-        if (failed >= config.maxFailures) {
-          stoppedEarly = true;
-          bail = true;
+        for (const ids of chunk(selection, config.chunkSize)) {
+          const chunkStatus = await runChunk(ids, 1);
+          recordRound(tally, orderedNow, chunkStatus, handlersNow);
+          partialStatus = tallyToStatus(tally);
+          executed = tally.size;
+          // Distinct tests, not failed rounds: one test failing every round
+          // must not trip the default limit of 10 and cut the measurement short.
+          if (config.maxFailures > 0 && failedTestCount(tally) >= config.maxFailures) {
+            stoppedEarly = true;
+            break;
+          }
         }
       }
+    } else {
+      const seenIds = new Set();
 
-      if (perTest && chunkClip) {
-        const result = await finishClip(chunkClip, ids.length);
-        if (result.failed) recordingFailed = true;
-        if (result.info) recordingInfos.push(result.info);
-        if (result.info) for (const entry of partialStatus) if (ids.includes(entry.id)) entry.recording = result.info.file;
+      for (const ids of chunks) {
+        let chunkClip = null;
+        if (perTest && !recordingFailed) {
+          const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
+          chunkClip = await startClip(testNames);
+        } else if (perTest && !recordingAbandoned) {
+          // Every further clip would stop against the same dead encoder, each one
+          // racing the 30s deadline, so maxClips stalls replace one. The tests keep
+          // running: a broken encoder must not swallow their results.
+          recordingAbandoned = true;
+          console.error('Recording stopped for the rest of the run. The remaining tests still run, unrecorded.');
+        }
+
+        const chunkStatus = await runChunk(ids, config.retryCount);
+
+        for (const entry of chunkStatus) {
+          if (seenIds.has(entry.id)) continue;
+          seenIds.add(entry.id);
+          partialStatus.push(entry);
+        }
+        executed += ids.length;
+
+        let bail = false;
+        if (config.maxFailures > 0) {
+          const failed = partialStatus.filter((t) => t.status === 'fail').length;
+          if (failed >= config.maxFailures) {
+            stoppedEarly = true;
+            bail = true;
+          }
+        }
+
+        if (perTest && chunkClip) {
+          const result = await finishClip(chunkClip, ids.length);
+          if (result.failed) recordingFailed = true;
+          if (result.info) recordingInfos.push(result.info);
+          if (result.info) for (const entry of partialStatus) if (ids.includes(entry.id)) entry.recording = result.info.file;
+        }
+
+        if (bail) break;
       }
-
-      if (bail) break;
     }
 
     if (recording && !perTest) {
@@ -599,16 +676,16 @@ export async function runTests(options = {}) {
     // Contract validation. A sharded run validates even after an early stop and
     // flags the result partial, so merge can say exactly what is missing rather
     // than silently dropping a shard's worth of mocks. A non-sharded run keeps
-    // skipping, exactly as before.
-    const contractsConfigured = Boolean(config.contracts && config.contracts.length > 0);
+    // skipping, exactly as before. --repeat never validates: the skip was logged
+    // before launch, and the report must not claim a check that did not happen.
     let contractsBlock = {
-      configured: contractsConfigured,
+      configured: repeating ? false : contractsConfigured,
       partial: false,
       results: [],
       skipped: [],
     };
 
-    if (contractsConfigured && (sharded || !stoppedEarly)) {
+    if (!repeating && contractsConfigured && (sharded || !stoppedEarly)) {
       // Never under sharding. A shard whose slice exercised no mocks — and any
       // shard with an empty slice — collects nothing, which is normal, so this
       // would advertise a twd-js version problem that does not exist on the
@@ -663,12 +740,14 @@ export async function runTests(options = {}) {
     // while a red fourth writes none — a merged report that looks complete but
     // is missing a quarter of the code paths. `merge` applies the gate to the
     // true global result instead.
-    if (selectedIds && config.coverage) {
+    if (repeating && config.coverage) {
+      console.log('Skipping coverage collection (--repeat).');
+    } else if (selectedIds && config.coverage) {
       console.log('Skipping coverage collection (test filter active).');
     }
 
     let coverageData = null;
-    if (config.coverage && !selectedIds && (sharded || !hasFailures)) {
+    if (config.coverage && !repeating && !selectedIds && (sharded || !hasFailures)) {
       coverageData = await page.evaluate(() => window.__coverage__);
       if (!coverageData) {
         console.log('No code coverage data found.');
@@ -718,11 +797,13 @@ export async function runTests(options = {}) {
       maxFailures: config.maxFailures,
       reportPath,
       cpuThrottle: throttleRate,
+      repeat: repeating ? repeatCount : null,
     }));
 
     return hasFailures;
 
   } catch (error) {
+    if (error?.usage) throw error;
     const message = error && error.message ? error.message : String(error);
     const diagnostic = config ? explainError(error, config) : null;
     const reportPath = emitReport({ error: { message, diagnostic: diagnostic ?? null } });
@@ -735,6 +816,7 @@ export async function runTests(options = {}) {
         durationMs,
         reportPath,
         cpuThrottle: throttleRate,
+        repeat: repeating ? repeatCount : null,
       }));
       console.log('\nRun interrupted before completion — results above are partial.');
     }

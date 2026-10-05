@@ -48,10 +48,17 @@ function table(report) {
   return [`| ${cols.join(' | ')} |`, `|${cols.map(() => '---').join('|')}|`, `| ${cells.join(' | ')} |`];
 }
 
+function resultNote(entry) {
+  if (typeof entry.runs === 'number') {
+    const count = `${entry.passes}/${entry.runs} passed`;
+    return ` _(${entry.flaky ? `flaky, ${count}` : count})_`;
+  }
+  return entry.attempts > 1 ? ` _(${entry.attempts} attempts)_` : '';
+}
+
 function item(entry) {
   if (entry.kind === 'test') {
-    const retried = entry.attempts > 1 ? ` _(${entry.attempts} attempts)_` : '';
-    const lines = [`- ❌ **${escapeMd(pretty(entry.path))}**${retried}`];
+    const lines = [`- ❌ **${escapeMd(pretty(entry.path))}**${resultNote(entry)}`];
     if (entry.error) lines.push(`  > ${code(firstLine(entry.error))}`);
     if (entry.snapshot) lines.push(`  > Layout snapshot ${code(entry.snapshot.name)} differs, diff in the report`);
     return lines;
@@ -82,6 +89,8 @@ export function renderMarkdown(report) {
   }
 
   lines.push(...table(report), '');
+
+  if (report.run?.repeat > 1) lines.push(`Repeated ${report.run.repeat}×.`, '');
 
   const items = needsAttention(report);
   if (items.length) {
