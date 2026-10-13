@@ -1,5 +1,6 @@
 import { parseShardSpec } from './shard.js';
 import { parseCpuThrottle } from './cpuThrottle.js';
+import { parseRepeat } from './repeat.js';
 
 // Every flag each parser recognises. src/usage.js has to describe all of
 // them, and tests/usage.test.js checks that it does.
@@ -16,6 +17,7 @@ export const RUN_FLAGS = [
   '--record-speed',
   '--record-pace',
   '--cpu-throttle',
+  '--repeat',
 ];
 
 export const MERGE_FLAGS = ['--out'];
@@ -104,6 +106,9 @@ export function parseRunArgs(argv) {
   // null, not 1, when absent: the flag overrides cpuThrottle in the config, so
   // a default here would shadow it.
   let cpuThrottle = null;
+  // null when absent, so a single run does not grow a repeat field. 1 is a
+  // legal value and means one pass, the same as leaving the flag off.
+  let repeat = null;
   // Two separate flags on purpose, the way Jest separates them. They close two
   // different holes: --update-snapshots rewrites references that already exist,
   // --ci forbids creating one that does not. The precedence between them is
@@ -170,6 +175,12 @@ export function parseRunArgs(argv) {
       // was throttled.
       cpuThrottle = parseCpuThrottle(value, '--cpu-throttle');
       i += consumed - 1;
+    } else if (token === '--repeat' || token.startsWith('--repeat=')) {
+      const { value, consumed } = readValue(argv, token, '--repeat', i);
+      // Throws, like --shard and --cpu-throttle. A silently dropped repeat is
+      // one run the caller believes was repeated.
+      repeat = parseRepeat(value);
+      i += consumed - 1;
     } else if (token.startsWith('--')) {
       unknown.push(token);
     }
@@ -177,7 +188,7 @@ export function parseRunArgs(argv) {
 
   if (unknown.length) throw unknownOptionsError('run', unknown, RUN_FLAGS);
 
-  return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci, cpuThrottle };
+  return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci, cpuThrottle, repeat };
 }
 
 // `twd-cli report [<dir|run.json>] [--format <f>]`.

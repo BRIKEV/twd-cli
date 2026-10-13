@@ -1,5 +1,6 @@
 import { buildTestPath } from './buildTestPath.js';
 import { formatFailureDiagnostics } from './failureDiagnostics.js';
+import { isFlaky } from './repeat.js';
 
 /**
  * Display name for one test result.
@@ -16,6 +17,36 @@ function resolvePath(entry, handlers) {
   return entry.path ?? buildTestPath(entry.id, handlers) ?? entry.id;
 }
 
+function outcomeCounts(testStatus, repeat) {
+  if (!(repeat > 1)) {
+    return {
+      passed: testStatus.filter((t) => t.status === 'pass').length,
+      failed: testStatus.filter((t) => t.status === 'fail').length,
+      skipped: testStatus.filter((t) => t.status === 'skip').length,
+    };
+  }
+  return testStatus.reduce((totals, test) => {
+    const passes = test.passes ?? 0;
+    const skips = test.skips ?? 0;
+    const runs = test.runs ?? 0;
+    totals.passed += passes;
+    totals.skipped += skips;
+    totals.failed += runs - passes - skips;
+    return totals;
+  }, { passed: 0, failed: 0, skipped: 0 });
+}
+
+function pushResultLines(lines, test, handlers, marker, suffix) {
+  const testPath = resolvePath(test, handlers);
+  lines.push(`    ${marker} ${testPath}${suffix}`);
+  for (const row of formatFailureDiagnostics(test.diagnostics)) {
+    lines.push(`      ${row}`);
+  }
+  if (test.error) {
+    lines.push(`      ${String(test.error).replace(/\n/g, '\n      ')}`);
+  }
+}
+
 export function formatRunComplete({
   testStatus,
   handlers,
@@ -27,10 +58,9 @@ export function formatRunComplete({
   computeMs = null,
   reportPath = null,
   cpuThrottle = 1,
+  repeat = null,
 }) {
-  const passed = testStatus.filter((t) => t.status === 'pass').length;
-  const failed = testStatus.filter((t) => t.status === 'fail').length;
-  const skipped = testStatus.filter((t) => t.status === 'skip').length;
+  const { passed, failed, skipped } = outcomeCounts(testStatus, repeat);
   const duration = (durationMs / 1000).toFixed(1);
 
   const lines = [
@@ -54,21 +84,26 @@ export function formatRunComplete({
   // Right under the duration it inflates. Only when active, so an unthrottled
   // block stays exactly what it has always been.
   if (cpuThrottle > 1) lines.push(`  CPU throttle: ${cpuThrottle}x`);
+  if (repeat > 1) lines.push(`  Repeat: ${repeat}x`);
 
-  const failures = testStatus.filter((t) => t.status === 'fail');
+  const repeating = repeat > 1;
+  const flaky = repeating ? testStatus.filter((t) => isFlaky(t)) : [];
+  const failures = testStatus.filter((t) => t.status === 'fail' && !(repeating && isFlaky(t)));
   if (failures.length > 0) {
     lines.push('', `  Failed tests (${failures.length}):`);
     for (const failure of failures) {
-      const testPath = resolvePath(failure, handlers);
-      lines.push(`    × ${testPath}`);
-      // Above the error, not below: a twd-js failure message can carry a full
-      // accessible-roles dump, which would bury the block underneath it.
-      for (const row of formatFailureDiagnostics(failure.diagnostics)) {
-        lines.push(`      ${row}`);
-      }
-      if (failure.error) {
-        lines.push(`      ${String(failure.error).replace(/\n/g, '\n      ')}`);
-      }
+      const suffix = repeating ? ` (${failure.passes ?? 0}/${failure.runs} passed)` : '';
+      // The marker line, then diagnostics, then the error. A twd-js failure
+      // message can carry a full accessible-roles dump, which would bury the
+      // block if the error came first.
+      pushResultLines(lines, failure, handlers, '×', suffix);
+    }
+  }
+
+  if (flaky.length > 0) {
+    lines.push('', `  Flaky (${flaky.length}):`);
+    for (const test of flaky) {
+      pushResultLines(lines, test, handlers, '~', ` (${test.passes}/${test.runs} passed)`);
     }
   }
 

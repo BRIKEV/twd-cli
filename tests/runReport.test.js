@@ -205,6 +205,29 @@ describe('schema v3', () => {
     expect(build().schemaVersion).toBe(3);
   });
 
+  it('carries repeat on the run and per-test counts without changing the outcome', () => {
+    const report = build({
+      repeat: 10,
+      tests: [{ id: 't1', status: 'fail', error: 'total', runs: 10, passes: 8, skips: 0 }],
+    });
+    expect(report.run.repeat).toBe(10);
+    expect(report.tests[0]).toMatchObject({ status: 'fail', runs: 10, passes: 8, skips: 0 });
+    expect(report.outcome).toBe('failed');
+    expect(report.schemaVersion).toBe(3);
+  });
+
+  it('omits repeat from the header when the run was not repeated', () => {
+    expect(build().run.repeat).toBeUndefined();
+  });
+
+  it('keeps a path recorded before the test id went stale across a reload', () => {
+    const report = build({
+      tests: [{ id: 'stale', status: 'fail', error: 'e', path: 'Checkout > checkout flow', index: 4, runs: 2, passes: 1 }],
+    });
+    expect(report.tests[0].path).toBe('Checkout > checkout flow');
+    expect(report.tests[0].index).toBe(4);
+  });
+
   it('records the run header', () => {
     const report = build({ version: '1.10.0', url: 'http://localhost:5173' });
     expect(report.run).toEqual({

@@ -7,6 +7,22 @@ describe('needsAttention', () => {
     expect(needsAttention(report())).toEqual([]);
   });
 
+  it('marks a test that both passed and failed as flaky and keeps its counts', () => {
+    const [item] = needsAttention(report({
+      tests: [{ id: 't1', status: 'fail', error: 'boom', runs: 10, passes: 8, skips: 0 }],
+    }));
+    expect(item).toMatchObject({ kind: 'test', flaky: true, runs: 10, passes: 8, error: 'boom' });
+  });
+
+  it('does not mark a test that failed every round as flaky', () => {
+    const [item] = needsAttention(report({
+      tests: [{ id: 't1', status: 'fail', error: 'boom', runs: 10, passes: 0, skips: 0 }],
+    }));
+    expect(item.flaky).toBe(false);
+    expect(item.runs).toBe(10);
+    expect(item.passes).toBe(0);
+  });
+
   it('lists failed tests in run order with their error and attempts', () => {
     const items = needsAttention(report({
       tests: [

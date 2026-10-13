@@ -69,6 +69,7 @@ export function buildRunReport({
   snapshots = [],
   recordingFailed = false,
   coverage = null,
+  repeat = null,
 }) {
   // Resolved here, in the shard that ran the tests, because this is the only
   // place the handler map is valid: ids are per-page-load random, so shard 2's
@@ -80,7 +81,7 @@ export function buildRunReport({
 
   return finalizeReport({
     schemaVersion: REPORT_SCHEMA_VERSION,
-    run: { twdCliVersion: version, url },
+    run: { twdCliVersion: version, url, ...(repeat > 1 ? { repeat } : {}) },
     error,
     snapshots,
     coverage,
@@ -116,12 +117,15 @@ export function buildRunReport({
       ...test,
       // For display. May be null if the handler somehow went missing, so every
       // renderer has to tolerate that.
-      path: buildTestPath(test.id, handlers),
+      // A repeat reloads the page, so an id from an earlier round is absent from
+      // the last handler map. The tally stored the path and index while that
+      // round's map was still valid; keep them when the lookup misses.
+      path: buildTestPath(test.id, handlers) ?? test.path ?? null,
       // Identity. Position in the shard-independent ordered list is stable
       // across shards because registration order is deterministic, unlike the
       // random id. The path cannot serve as the key: two tests may share one
       // (duplicate names) and can legally land in different shards.
-      index: positions.has(test.id) ? positions.get(test.id) : null,
+      index: positions.has(test.id) ? positions.get(test.id) : (test.index ?? null),
       attempts: attemptsFor(test, retryCount),
     })),
     contracts: contracts ?? {

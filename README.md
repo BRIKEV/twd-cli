@@ -135,6 +135,29 @@ npx twd-cli run --cpu-throttle 6 --test "checkout flow"
 See [docs/cpu-throttling.md](docs/cpu-throttling.md) for the config key, what a
 throttled run prints, and how to hunt a flake reliably.
 
+### Repeating a selection
+
+One green run says little about a test that fails one time in ten. `--repeat <n>`
+runs the selected tests n times in one browser, reloading the page between
+rounds, and reports each test that did not pass every round:
+
+```bash
+npx twd-cli run --repeat 10 --test "checkout flow"
+npx twd-cli run --repeat 20 --cpu-throttle 6 --changed-since main
+```
+
+`<n>` is a positive integer (`--repeat 10` or `--repeat=10`). The run-complete
+block counts every round and lists a test that both passed and failed under
+`Flaky`, with how many rounds passed. The run exits 1 if any round of any test
+failed. Retries are turned off for the run, so a pass on a second attempt
+cannot hide the flake. `maxFailures` counts tests that failed at least once,
+not each failed round, so one test failing all 10 rounds does not stop the run
+at the default limit. `--repeat` cannot be combined with `--record` or
+`--shard`, and it skips coverage collection and contract validation.
+
+`run.json` records `repeat` on the run and `runs` / `passes` on each test. The
+HTML report and `summary.md` list flaky tests under Needs attention.
+
 ### Configuration
 
 Create a `twd.config.json` file in your project root:
