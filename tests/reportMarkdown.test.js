@@ -25,6 +25,25 @@ describe('renderMarkdown', () => {
     expect(md).toContain('1 ✓ · 0 ✕ · 0 ⚠');
   });
 
+  it('labels a flaky test under needs attention and notes the repeat', () => {
+    const md = renderMarkdown(report({
+      repeat: 10,
+      tests: [{ id: 't1', status: 'fail', error: 'Expected visible\nroles dump...', runs: 10, passes: 8, skips: 0 }],
+    }));
+    expect(md).toContain('- ❌ **Invoices › shows empty state** _(flaky, 8/10 passed)_');
+    expect(md).toContain('Repeated 10×');
+    expect(md).toContain('  > `Expected visible`');
+  });
+
+  it('shows a pass count for a test that failed every round without calling it flaky', () => {
+    const md = renderMarkdown(report({
+      repeat: 10,
+      tests: [{ id: 't1', status: 'fail', error: 'boom', runs: 10, passes: 0, skips: 0 }],
+    }));
+    expect(md).toContain('_(0/10 passed)_');
+    expect(md).not.toContain('flaky');
+  });
+
   it('lists each failure with its first error line', () => {
     const md = renderMarkdown(report({
       tests: [{ id: 't1', status: 'fail', error: 'Expected visible\nroles dump...' }],

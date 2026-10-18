@@ -26,16 +26,20 @@ CPU throttling: 6x (the browser runs 6 times slower; the dev server does not).
 Notes:
 
 - **It raises the odds of hitting a race; it does not reproduce one every
-  time.** Run it in a loop before concluding anything, in either direction:
+  time.** Repeat the selection in one run before concluding anything, in
+  either direction. `--repeat` reloads the page between rounds, keeps the
+  browser open, and names the test that did not pass every time:
   ```bash
-  for i in $(seq 10); do
-    npx twd-cli run --cpu-throttle 6 --test "checkout flow" --no-report > /dev/null && echo pass || echo FAIL
-  done
+  npx twd-cli run --repeat 10 --cpu-throttle 6 --test "checkout flow"
   ```
-- **Turn retries off while you hunt.** The default `retryCount` of `2` gives a
-  failed test a second attempt, and a flake that passes on the second attempt
-  is exactly what you are looking for. `retryCount` counts attempts, so
-  `"retryCount": 1` means no retry. A test that only passed on a retry is
+  A test that passed 8 of those 10 rounds is listed under `Flaky` with
+  `(8/10 passed)`. The run exits 1 if any round failed. While repeating,
+  `--repeat` skips coverage, contracts and layout snapshots.
+- **Retries are off while `--repeat` is running.** The default `retryCount`
+  of `2` gives a failed test a second attempt, and a flake that passes on
+  the second attempt is exactly what you are looking for, so `--repeat`
+  forces a single attempt. `retryCount` counts attempts: `"retryCount": 1`
+  means no retry on an ordinary run. A test that only passed on a retry is
   listed under `Retried` in the run-complete block.
 - **Only the browser is slowed.** The dev server, and anything else outside
   the page, runs at full speed.

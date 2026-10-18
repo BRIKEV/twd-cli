@@ -83,6 +83,20 @@ describe("twd-cli help", () => {
     expect(stderr).toMatch(/Did you mean --test\?/);
   });
 
+  it("run with a bad --repeat refuses to run: stderr names it, exit 1", async () => {
+    const { code, stdout, stderr } = await cli("run", "--repeat", "0");
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/Invalid --repeat: expected a positive integer, got "0"/);
+  });
+
+  it("run with --repeat and --ci refuses to run: stderr names it, exit 1, nothing on stdout", async () => {
+    const { code, stdout, stderr } = await cli("run", "--repeat", "2", "--ci");
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/--repeat cannot be combined with --ci/);
+  });
+
   it("run with a --cpu-throttle below 1 refuses to run: stderr names it, exit 1", async () => {
     const { code, stdout, stderr } = await cli("run", "--cpu-throttle", "0");
     expect(code).toBe(1);

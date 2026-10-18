@@ -29,6 +29,14 @@ describe("runUsage", () => {
     expect(runUsage()).toMatch(/--flag=value/);
   });
 
+  it("documents --repeat as a positive integer that cannot combine with record or shard", () => {
+    const text = runUsage();
+    expect(text).toContain('--repeat <n>');
+    expect(text).toMatch(/positive integer/);
+    expect(text).toMatch(/--record/);
+    expect(text).toMatch(/--shard/);
+  });
+
   it("does not describe merge", () => {
     expect(runUsage()).not.toMatch(/--out/);
   });

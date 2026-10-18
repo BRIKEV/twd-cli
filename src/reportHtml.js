@@ -46,6 +46,7 @@ function verdict(report) {
     `<span><b>${esc(summary.skipped)}</b> skipped</span>`,
   ];
   if (summary.notRun) stats.push(`<span><b>${esc(summary.notRun)}</b> not run</span>`);
+  if (run.repeat > 1) stats.push(`<span><b>${esc(run.repeat)}</b>×</span>`);
   if (report.contracts.configured) stats.push(`<span><b>${esc(summary.contracts.errors)}</b> contract errors</span>`);
   stats.push(`<span class="muted">${esc((run.durationMs / 1000).toFixed(1))}s · ${esc(run.url)} · ${esc(run.startedAt)}</span>`);
   return `<div class="verdict"><span class="badge ${esc(outcome)}">${esc(String(outcome).toUpperCase())}</span><div class="stats">${stats.join('')}</div></div>`;
@@ -60,7 +61,12 @@ function image(file, images) {
 function item(entry, images) {
   if (entry.kind === 'test') {
     const chips = [];
-    if (entry.attempts > 1) chips.push(`<span class="chip">${entry.attempts} attempts</span>`);
+    if (typeof entry.runs === 'number') {
+      const count = `${entry.passes}/${entry.runs} passed`;
+      chips.push(`<span class="chip">${esc(entry.flaky ? `flaky · ${count}` : count)}</span>`);
+    } else if (entry.attempts > 1) {
+      chips.push(`<span class="chip">${entry.attempts} attempts</span>`);
+    }
     return `<div class="item"><div class="path">${esc(entry.path)}</div>`
       + (entry.error ? `<pre>${esc(entry.error)}</pre>` : '')
       + (chips.length ? `<div class="chips">${chips.join('')}</div>` : '')

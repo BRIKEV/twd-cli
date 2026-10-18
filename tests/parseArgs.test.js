@@ -3,7 +3,7 @@ import { parseRunArgs, parseMergeArgs, parseReportArgs } from "../src/parseArgs.
 
 describe("parseRunArgs", () => {
   it("returns empty filters when no args", () => {
-    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null });
+    expect(parseRunArgs([])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null, repeat: null });
   });
 
   it("parses a single --test <value>", () => {
@@ -17,6 +17,7 @@ describe("parseRunArgs", () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
@@ -31,6 +32,7 @@ describe("parseRunArgs", () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
@@ -45,11 +47,12 @@ describe("parseRunArgs", () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
   it("ignores a trailing --test with no value", () => {
-    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null });
+    expect(parseRunArgs(['--test'])).toEqual({ testFilters: [], changedSince: null, record: {}, shard: null, reportDir: null, noReport: false, updateSnapshots: false, ci: false, cpuThrottle: null, repeat: null });
   });
 
   it("ignores positional tokens", () => {
@@ -100,6 +103,7 @@ describe("parseRunArgs", () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
@@ -137,6 +141,7 @@ describe("parseRunArgs", () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
@@ -177,6 +182,7 @@ describe('parseRunArgs shard and report flags', () => {
       updateSnapshots: false,
       ci: false,
       cpuThrottle: null,
+      repeat: null,
     });
   });
 
@@ -301,6 +307,61 @@ describe('parseRunArgs --cpu-throttle', () => {
 
   it('suggests --cpu-throttle for a near miss', () => {
     expect(() => parseRunArgs(['--cpu-throtle', '6'])).toThrow(/Did you mean --cpu-throttle\?/);
+  });
+});
+
+describe('parseRunArgs --repeat', () => {
+  it('parses --repeat in both forms', () => {
+    expect(parseRunArgs(['--repeat', '5']).repeat).toBe(5);
+    expect(parseRunArgs(['--repeat=10']).repeat).toBe(10);
+  });
+
+  it('is null when the flag is absent', () => {
+    expect(parseRunArgs([]).repeat).toBeNull();
+  });
+
+  it('accepts 1, a single run', () => {
+    expect(parseRunArgs(['--repeat', '1']).repeat).toBe(1);
+  });
+
+  it('throws on zero, fractions, and non-numbers', () => {
+    expect(() => parseRunArgs(['--repeat', '0'])).toThrow(/Invalid --repeat/);
+    expect(() => parseRunArgs(['--repeat=1.5'])).toThrow(/Invalid --repeat/);
+    expect(() => parseRunArgs(['--repeat', 'nope'])).toThrow(/got "nope"/);
+    expect(() => parseRunArgs(['--repeat', '-3'])).toThrow(/got "-3"/);
+  });
+
+  it('throws on a trailing --repeat with no value', () => {
+    expect(() => parseRunArgs(['--repeat'])).toThrow(/got nothing/);
+  });
+
+  it('throws rather than swallowing the flag that follows a valueless --repeat', () => {
+    expect(() => parseRunArgs(['--repeat', '--test', 'Login'])).toThrow(/got nothing/);
+  });
+
+  it('combines with --test and --cpu-throttle', () => {
+    const result = parseRunArgs(['--repeat', '10', '--cpu-throttle', '6', '--test', 'checkout']);
+    expect(result.repeat).toBe(10);
+    expect(result.cpuThrottle).toBe(6);
+    expect(result.testFilters).toEqual(['checkout']);
+  });
+
+  it.each([
+    [['--repeat', '2', '--shard', '1/2'], /--repeat cannot be combined with --shard\./],
+    [['--repeat', '2', '--record'], /--repeat cannot be combined with --record\./],
+    [['--repeat', '2', '--update-snapshots'], /--repeat cannot be combined with --update-snapshots\./],
+    [['--repeat', '2', '--ci'], /--repeat cannot be combined with --ci\./],
+    [['--repeat', '2', '--shard', '1/2', '--ci'], /--repeat cannot be combined with --shard and --ci\./],
+  ])('refuses %j in the parser', (argv, message) => {
+    expect(() => parseRunArgs(argv)).toThrow(message);
+  });
+
+  it('allows --repeat 1 with those flags', () => {
+    expect(parseRunArgs(['--repeat', '1', '--ci']).repeat).toBe(1);
+  });
+
+  it('suggests --repeat for a near miss', () => {
+    expect(() => parseRunArgs(['--repeats', '2'])).toThrow(/Did you mean --repeat\?/);
   });
 });
 

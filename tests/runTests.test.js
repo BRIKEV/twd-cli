@@ -812,7 +812,7 @@ describe("runTests recording", () => {
     await runTests();
 
     const [inject, flags] = page.evaluateOnNewDocument.mock.calls[0];
-    expect(flags).toEqual({ update: false, ci: false });
+    expect(flags).toEqual({ update: false, ci: false, snapshots: true });
 
     // The injected function is serialised into the browser, so run it here
     // against a stand-in global to see what it actually sets.
@@ -836,7 +836,7 @@ describe("runTests recording", () => {
 
     await runTests({ updateSnapshots: true, ci: true });
 
-    expect(page.evaluateOnNewDocument.mock.calls[0][1]).toEqual({ update: true, ci: true });
+    expect(page.evaluateOnNewDocument.mock.calls[0][1]).toEqual({ update: true, ci: true, snapshots: true });
   });
 
   it("does not touch any recording API when recording is disabled", async () => {
@@ -2691,5 +2691,251 @@ describe("runTests CPU throttling", () => {
 
     const logs = logSpy.mock.calls.map((c) => String(c[0]));
     expect(logs.some((l) => /CPU throttl/.test(l))).toBe(false);
+  });
+});
+
+describe('runTests --repeat', () => {
+  let logSpy;
+
+  function writtenReport() {
+    const call = vi.mocked(fs.writeFileSync).mock.calls
+      .find(([file]) => String(file).endsWith('run.json'));
+    return call ? JSON.parse(call[1]) : null;
+  }
+
+  function completeBlock() {
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    return logs.find((l) => l.startsWith('--- Run complete ---'));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    vi.mocked(fs.writeFileSync).mockReset();
+    // An earlier test installs an rmSync that throws EPERM. clearAllMocks does
+    // not drop that implementation, and a leaked throw becomes a clean warning
+    // on every later run.
+    vi.mocked(fs.rmSync).mockReset();
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reloads between rounds, forces a single attempt, and fails the run when any round failed', async () => {
+    const rounds = [
+      {
+        handlers: [
+          { id: 's1', name: 'Checkout', type: 'suite' },
+          { id: 'a', name: 'checkout flow', parent: 's1', type: 'test' },
+          { id: 'b', name: 'receipt', parent: 's1', type: 'test' },
+        ],
+        status: [
+          { id: 'a', status: 'pass' },
+          { id: 'b', status: 'pass' },
+        ],
+      },
+      {
+        handlers: [
+          { id: 's2', name: 'Checkout', type: 'suite' },
+          { id: 'c', name: 'checkout flow', parent: 's2', type: 'test' },
+          { id: 'd', name: 'receipt', parent: 's2', type: 'test' },
+        ],
+        status: [
+          { id: 'c', status: 'fail', error: 'total mismatch' },
+          { id: 'd', status: 'pass' },
+        ],
+      },
+    ];
+    let enumerated = 0;
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, retryCount, ids) => {
+      if (ids === undefined) {
+        const round = rounds[enumerated];
+        enumerated += 1;
+        return round.handlers;
+      }
+      expect(retryCount).toBe(1);
+      return rounds[enumerated - 1].status;
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, retryCount: 3, coverage: true,
+    });
+
+    const failed = await runTests({ repeat: 2 });
+
+    expect(failed).toBe(true);
+    expect(page.goto).toHaveBeenCalledTimes(2);
+    expect(page.waitForSelector).toHaveBeenCalledTimes(2);
+    expect(puppeteer.launch).toHaveBeenCalledTimes(1);
+    const block = completeBlock();
+    expect(block).toContain('Passed: 1 | Failed: 1 | Skipped: 0');
+    expect(block).toContain('Repeat: 2x');
+    expect(block).toContain('Flaky (1):');
+    expect(block).toContain('~ Checkout > checkout flow (1/2 passed)');
+    expect(block).toContain('total mismatch');
+    expect(block).not.toContain('Retried');
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('retries are off'))).toBe(true);
+    expect(logs.some((l) => l.includes('Skipping coverage collection (--repeat)'))).toBe(true);
+
+    const report = writtenReport();
+    expect(report.run.repeat).toBe(2);
+    expect(report.outcome).toBe('failed');
+    expect(report.tests.find((t) => t.passes === 1)).toMatchObject({
+      status: 'fail', runs: 2, passes: 1,
+    });
+    const files = vi.mocked(fs.writeFileSync).mock.calls.map(([f]) => String(f));
+    expect(files.some((f) => f.includes('.nyc_output'))).toBe(false);
+  });
+
+  it('exits 0 when every round passed', async () => {
+    const handlers = [{ id: 't', name: 'stable', type: 'test' }];
+    let enumerated = 0;
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) {
+        enumerated += 1;
+        return handlers;
+      }
+      return [{ id: 't', status: 'pass' }];
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    const failed = await runTests({ repeat: 3 });
+
+    expect(failed).toBe(false);
+    expect(page.goto).toHaveBeenCalledTimes(3);
+    expect(enumerated).toBe(3);
+    expect(completeBlock()).toContain('Passed: 1 | Failed: 0 | Skipped: 0');
+    expect(completeBlock()).not.toContain('Flaky');
+    expect(writtenReport().outcome).toBe('passed');
+    expect(writtenReport().run.repeat).toBe(3);
+  });
+
+  it('does not bail when the same test fails every round under the default failure limit', async () => {
+    const handlers = [{ id: 't', name: 'flaky', type: 'test' }];
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) return handlers;
+      return [{ id: 't', status: 'fail', error: 'x' }];
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, maxFailures: 2 });
+
+    const failed = await runTests({ repeat: 4 });
+
+    expect(failed).toBe(true);
+    expect(page.goto).toHaveBeenCalledTimes(4);
+    const chunks = page.evaluate.mock.calls.filter((call) => call.length === 3);
+    expect(chunks).toHaveLength(4);
+    expect(completeBlock()).toContain('(0/4 passed)');
+    expect(completeBlock()).not.toContain('Flaky');
+    expect(completeBlock()).not.toContain('Stopped early');
+  });
+
+  it('stops once enough distinct tests have failed, and does not start another round', async () => {
+    const handlers = [
+      { id: 't1', name: 'one', type: 'test' },
+      { id: 't2', name: 'two', type: 'test' },
+      { id: 't3', name: 'three', type: 'test' },
+    ];
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) return handlers;
+      return ids.map((id) => ({ id, status: 'fail', error: 'x' }));
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, maxFailures: 1, chunkSize: 1 });
+
+    await runTests({ repeat: 3 });
+
+    expect(page.goto).toHaveBeenCalledTimes(1);
+    const chunks = page.evaluate.mock.calls.filter((call) => call.length === 3);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0][2]).toEqual(['t1']);
+    expect(completeBlock()).toContain('Stopped early');
+    expect(writtenReport().run.repeat).toBe(3);
+    expect(writtenReport().tests).toEqual([
+      expect.objectContaining({ runs: 1, passes: 0, status: 'fail' }),
+    ]);
+  });
+
+  it('refuses --repeat together with --shard before launching a browser', async () => {
+    await expect(runTests({ repeat: 2, shard: { index: 1, total: 2 } }))
+      .rejects.toThrow(/--repeat cannot be combined with --shard/);
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it('refuses --repeat together with recording before launching a browser', async () => {
+    await expect(runTests({ repeat: 2, recordOverrides: { enabled: true } }))
+      .rejects.toThrow(/--repeat cannot be combined with --record/);
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+    expect(assertFfmpegCapable).not.toHaveBeenCalled();
+  });
+
+  it('refuses --repeat when recording is enabled in the config', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, record: { enabled: true },
+    });
+    await expect(runTests({ repeat: 2 })).rejects.toThrow(
+      /--repeat cannot run with "record\.enabled": true in twd\.config\.json\./,
+    );
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it('does not clean the report folder when the config recording refusal throws', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, record: { enabled: true },
+    });
+    // cleanReportDir would remove these if it ran; a refused run must not.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
+
+    await expect(runTests({ repeat: 2 })).rejects.toThrow(/record\.enabled/);
+
+    expect(fs.rmSync).not.toHaveBeenCalled();
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it('disables layout snapshots while repeating', async () => {
+    const handlers = [{ id: 't', name: 'stable', type: 'test' }];
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) return handlers;
+      return [{ id: 't', status: 'pass' }];
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ repeat: 2, updateSnapshots: true, ci: true });
+
+    const [inject, flags] = page.evaluateOnNewDocument.mock.calls[0];
+    expect(flags).toEqual({ update: false, ci: false, snapshots: false });
+    expect(runInjected(inject, flags)).toEqual({ __TWD_SNAPSHOTS__: false });
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('Skipping layout snapshots (--repeat)'))).toBe(true);
+  });
+
+  it('skips contract validation while repeating', async () => {
+    const handlers = [{ id: 't', name: 'stable', type: 'test' }];
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) return handlers;
+      return [{ id: 't', status: 'pass' }];
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, contracts: [{ source: 'api.json' }],
+    });
+    vi.mocked(loadContracts).mockResolvedValue([]);
+    vi.mocked(validateMocks).mockReturnValue({ results: [], skipped: [] });
+
+    await runTests({ repeat: 2 });
+
+    expect(loadContracts).not.toHaveBeenCalled();
+    expect(validateMocks).not.toHaveBeenCalled();
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('Skipping contract validation (--repeat)'))).toBe(true);
   });
 });
