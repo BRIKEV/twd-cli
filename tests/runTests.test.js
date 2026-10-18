@@ -812,7 +812,7 @@ describe("runTests recording", () => {
     await runTests();
 
     const [inject, flags] = page.evaluateOnNewDocument.mock.calls[0];
-    expect(flags).toEqual({ update: false, ci: false });
+    expect(flags).toEqual({ update: false, ci: false, snapshots: true });
 
     // The injected function is serialised into the browser, so run it here
     // against a stand-in global to see what it actually sets.
@@ -836,7 +836,7 @@ describe("runTests recording", () => {
 
     await runTests({ updateSnapshots: true, ci: true });
 
-    expect(page.evaluateOnNewDocument.mock.calls[0][1]).toEqual({ update: true, ci: true });
+    expect(page.evaluateOnNewDocument.mock.calls[0][1]).toEqual({ update: true, ci: true, snapshots: true });
   });
 
   it("does not touch any recording API when recording is disabled", async () => {
@@ -2771,7 +2771,7 @@ describe('runTests --repeat', () => {
     expect(page.waitForSelector).toHaveBeenCalledTimes(2);
     expect(puppeteer.launch).toHaveBeenCalledTimes(1);
     const block = completeBlock();
-    expect(block).toContain('Passed: 3 | Failed: 1 | Skipped: 0');
+    expect(block).toContain('Passed: 1 | Failed: 1 | Skipped: 0');
     expect(block).toContain('Repeat: 2x');
     expect(block).toContain('Flaky (1):');
     expect(block).toContain('~ Checkout > checkout flow (1/2 passed)');
@@ -2809,7 +2809,7 @@ describe('runTests --repeat', () => {
     expect(failed).toBe(false);
     expect(page.goto).toHaveBeenCalledTimes(3);
     expect(enumerated).toBe(3);
-    expect(completeBlock()).toContain('Passed: 3 | Failed: 0 | Skipped: 0');
+    expect(completeBlock()).toContain('Passed: 1 | Failed: 0 | Skipped: 0');
     expect(completeBlock()).not.toContain('Flaky');
     expect(writtenReport().outcome).toBe('passed');
     expect(writtenReport().run.repeat).toBe(3);
@@ -2880,8 +2880,41 @@ describe('runTests --repeat', () => {
     vi.mocked(loadConfig).mockReturnValue({
       ...defaultMockConfig, record: { enabled: true },
     });
-    await expect(runTests({ repeat: 2 })).rejects.toThrow(/--record/);
+    await expect(runTests({ repeat: 2 })).rejects.toThrow(
+      /--repeat cannot run with "record\.enabled": true in twd\.config\.json\./,
+    );
     expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it('does not clean the report folder when the config recording refusal throws', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig, record: { enabled: true },
+    });
+    // cleanReportDir would remove these if it ran; a refused run must not.
+    vi.mocked(fs.readdirSync).mockReturnValue(['run.json']);
+
+    await expect(runTests({ repeat: 2 })).rejects.toThrow(/record\.enabled/);
+
+    expect(fs.rmSync).not.toHaveBeenCalled();
+    expect(puppeteer.launch).not.toHaveBeenCalled();
+  });
+
+  it('disables layout snapshots while repeating', async () => {
+    const handlers = [{ id: 't', name: 'stable', type: 'test' }];
+    const page = createMockPage();
+    page.evaluate = vi.fn(async (_fn, _retryCount, ids) => {
+      if (ids === undefined) return handlers;
+      return [{ id: 't', status: 'pass' }];
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ repeat: 2, updateSnapshots: true, ci: true });
+
+    const [inject, flags] = page.evaluateOnNewDocument.mock.calls[0];
+    expect(flags).toEqual({ update: false, ci: false, snapshots: false });
+    expect(runInjected(inject, flags)).toEqual({ __TWD_SNAPSHOTS__: false });
+    const logs = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes('Skipping layout snapshots (--repeat)'))).toBe(true);
   });
 
   it('skips contract validation while repeating', async () => {

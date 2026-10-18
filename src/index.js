@@ -202,6 +202,30 @@ export async function runTests(options = {}) {
     if (reportOptions?.unknownFormats.length) {
       console.warn(`Warning: unknown report format(s) ignored: ${reportOptions.unknownFormats.join(', ')}`);
     }
+    // config.record can be a shared default object; copy instead of mutating it.
+    // Resolved before cleanReportDir: a refused --repeat run must not delete
+    // the previous report. Flag combinations are refused in parseRunArgs;
+    // this guards direct runTests callers and the config-only case.
+    const record = { ...(config.record || {}), ...recordOverrides };
+    const recording = Boolean(record.enabled);
+    if (!record.dir) record.dir = path.join(reportOptions?.dir ?? DEFAULT_REPORT_DIR, RECORDINGS_DIR);
+    if (repeating) {
+      const flagConflict = [
+        sharded ? '--shard' : null,
+        recordOverrides?.enabled ? '--record' : null,
+      ].filter(Boolean);
+      if (flagConflict.length) {
+        const error = new Error(`twd-cli run: --repeat cannot be combined with ${flagConflict.join(' and ')}.`);
+        error.usage = true;
+        throw error;
+      }
+      if (config.record?.enabled) {
+        const error = new Error('twd-cli run: --repeat cannot run with "record.enabled": true in twd.config.json.');
+        error.usage = true;
+        throw error;
+      }
+    }
+
     if (reportOptions) {
       try {
         cleanReportDir(path.resolve(workingDir, reportOptions.dir));
@@ -220,20 +244,6 @@ export async function runTests(options = {}) {
     // bad one only fails the runs nobody passes a flag to, which is CI.
     const configThrottle = parseCpuThrottle(config.cpuThrottle ?? 1, '"cpuThrottle" in twd.config.json');
     throttleRate = cpuThrottle ?? configThrottle;
-
-    // config.record can be a shared default object; copy instead of mutating it.
-    // Resolved before --changed-since returns: --repeat with --record or --shard
-    // is a usage error even on a branch that changed no tests, and it has to
-    // fail before the ffmpeg probe or the browser launch.
-    const record = { ...(config.record || {}), ...recordOverrides };
-    const recording = Boolean(record.enabled);
-    if (!record.dir) record.dir = path.join(reportOptions?.dir ?? DEFAULT_REPORT_DIR, RECORDINGS_DIR);
-    if (repeating && (sharded || recording)) {
-      const conflict = [sharded ? '--shard' : null, recording ? '--record' : null].filter(Boolean).join(' and ');
-      const error = new Error(`twd-cli run: --repeat cannot be combined with ${conflict}.`);
-      error.usage = true;
-      throw error;
-    }
 
     // Resolved before anything else, including the ffmpeg probe: a branch that
     // changed no tests then needs neither a browser, nor a dev server, nor
@@ -262,6 +272,9 @@ export async function runTests(options = {}) {
     // checked across n reloads is a different question, and out of scope here.
     let contractValidators = [];
     const contractsConfigured = Boolean(config.contracts && config.contracts.length > 0);
+    if (repeating) {
+      console.log('Skipping layout snapshots (--repeat).');
+    }
     if (repeating && contractsConfigured) {
       console.log('Skipping contract validation (--repeat).');
     } else if (contractsConfigured) {
@@ -312,13 +325,15 @@ export async function runTests(options = {}) {
     // evaluateOnNewDocument, never evaluate: this runs before any script on the
     // page, so the flags are already set by the time matchLayout reads them.
     // The twdSnapshot vite plugin sets its own flag with ??= precisely so this
-    // injection wins. __TWD_SNAPSHOTS__ is always on here because twd-cli is
-    // where a layout snapshot is actually decided.
+    // injection wins. __TWD_SNAPSHOTS__ is on here (off under --repeat)
+    // because twd-cli is where a layout snapshot is actually decided.
     await page.evaluateOnNewDocument((flags) => {
-      window.__TWD_SNAPSHOTS__ = true;
+      // Explicit false under --repeat: twd-js defaults this with ??= true,
+      // so leaving it unset would turn snapshots back on.
+      window.__TWD_SNAPSHOTS__ = flags.snapshots ?? true;
       if (flags.update) window.__TWD_UPDATE_SNAPSHOTS__ = true;
       if (flags.ci) window.__TWD_SNAPSHOT_CI__ = true;
-    }, { update: updateSnapshots, ci });
+    }, { update: repeating ? false : updateSnapshots, ci: repeating ? false : ci, snapshots: !repeating });
 
     // Navigate to your development server
     startedAt = Date.now();

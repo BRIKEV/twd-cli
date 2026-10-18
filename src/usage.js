@@ -69,7 +69,10 @@ Repeating:
                          that failed a round with how often it passed. <n> is
                          a positive integer. Retries are off for the run.
                          maxFailures counts tests that failed, not each failed
-                         round. Cannot be combined with --record or --shard.
+                         round. The console counts tests, not rounds. Cannot
+                         be combined with --record, --shard,
+                         --update-snapshots or --ci. Skips coverage,
+                         contracts and layout snapshots.
                          Exits 1 if any round of any test failed.
 
 Sharding (beta):

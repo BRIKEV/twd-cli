@@ -188,6 +188,19 @@ export function parseRunArgs(argv) {
 
   if (unknown.length) throw unknownOptionsError('run', unknown, RUN_FLAGS);
 
+  // Refused here, before runTests can clean the report folder or launch.
+  if (repeat > 1) {
+    const conflicts = [
+      shard ? '--shard' : null,
+      record.enabled ? '--record' : null,
+      updateSnapshots ? '--update-snapshots' : null,
+      ci ? '--ci' : null,
+    ].filter(Boolean);
+    if (conflicts.length) {
+      throw new Error(`twd-cli run: --repeat cannot be combined with ${conflicts.join(' and ')}.`);
+    }
+  }
+
   return { testFilters, changedSince, record, shard, reportDir, noReport, updateSnapshots, ci, cpuThrottle, repeat };
 }
 

@@ -33,7 +33,8 @@ Notes:
   npx twd-cli run --repeat 10 --cpu-throttle 6 --test "checkout flow"
   ```
   A test that passed 8 of those 10 rounds is listed under `Flaky` with
-  `(8/10 passed)`. The run exits 1 if any round failed.
+  `(8/10 passed)`. The run exits 1 if any round failed. While repeating,
+  `--repeat` skips coverage, contracts and layout snapshots.
 - **Retries are off while `--repeat` is running.** The default `retryCount`
   of `2` gives a failed test a second attempt, and a flake that passes on
   the second attempt is exactly what you are looking for, so `--repeat`

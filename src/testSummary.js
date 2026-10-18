@@ -17,23 +17,15 @@ function resolvePath(entry, handlers) {
   return entry.path ?? buildTestPath(entry.id, handlers) ?? entry.id;
 }
 
-function outcomeCounts(testStatus, repeat) {
-  if (!(repeat > 1)) {
-    return {
-      passed: testStatus.filter((t) => t.status === 'pass').length,
-      failed: testStatus.filter((t) => t.status === 'fail').length,
-      skipped: testStatus.filter((t) => t.status === 'skip').length,
-    };
-  }
-  return testStatus.reduce((totals, test) => {
-    const passes = test.passes ?? 0;
-    const skips = test.skips ?? 0;
-    const runs = test.runs ?? 0;
-    totals.passed += passes;
-    totals.skipped += skips;
-    totals.failed += runs - passes - skips;
-    return totals;
-  }, { passed: 0, failed: 0, skipped: 0 });
+// Count tests, not rounds, so the console matches run.json and the reports.
+// A test that failed any round has status "fail" and counts once; the
+// per-test (passes/runs passed) suffix carries the round detail.
+function outcomeCounts(testStatus) {
+  return {
+    passed: testStatus.filter((t) => t.status === 'pass').length,
+    failed: testStatus.filter((t) => t.status === 'fail').length,
+    skipped: testStatus.filter((t) => t.status === 'skip').length,
+  };
 }
 
 function pushResultLines(lines, test, handlers, marker, suffix) {
@@ -60,7 +52,7 @@ export function formatRunComplete({
   cpuThrottle = 1,
   repeat = null,
 }) {
-  const { passed, failed, skipped } = outcomeCounts(testStatus, repeat);
+  const { passed, failed, skipped } = outcomeCounts(testStatus);
   const duration = (durationMs / 1000).toFixed(1);
 
   const lines = [

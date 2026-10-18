@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatRunComplete } from '../src/testSummary.js';
+import { buildRunReport } from '../src/runReport.js';
 
 const handlers = [
   { id: 's1', name: 'Login', type: 'suite' },
@@ -257,7 +258,7 @@ describe('formatRunComplete with --repeat', () => {
     { id: 't2', name: 'checkout flow', parent: 's', type: 'test' },
   ];
 
-  it('counts rounds and lists a test that both passed and failed as flaky', () => {
+  it('counts tests and lists a test that both passed and failed as flaky', () => {
     const block = formatRunComplete({
       testStatus: [
         { id: 't1', status: 'pass', runs: 10, passes: 10, skips: 0 },
@@ -276,7 +277,7 @@ describe('formatRunComplete with --repeat', () => {
     });
     expect(block).toBe(
       '--- Run complete ---\n' +
-      '  Passed: 18 | Failed: 2 | Skipped: 0\n' +
+      '  Passed: 1 | Failed: 1 | Skipped: 0\n' +
       '  Duration: 41.3s\n' +
       '  Repeat: 10x\n' +
       '\n' +
@@ -293,23 +294,46 @@ describe('formatRunComplete with --repeat', () => {
       durationMs: 1000,
       repeat: 10,
     });
-    expect(block).toContain('  Passed: 0 | Failed: 10 | Skipped: 0');
+    expect(block).toContain('  Passed: 0 | Failed: 1 | Skipped: 0');
     expect(block).toContain('  Repeat: 10x');
     expect(block).toContain('    × Login > shows error on wrong password (0/10 passed)');
     expect(block).toContain('      boom');
     expect(block).not.toContain('Flaky');
   });
 
-  it('counts skipped rounds toward the header, not as failures', () => {
+  it('counts a partly skipped test once, as passed, not by rounds', () => {
     const block = formatRunComplete({
       testStatus: [{ id: 't1', status: 'pass', runs: 3, passes: 2, skips: 1 }],
       handlers,
       durationMs: 1000,
       repeat: 3,
     });
-    expect(block).toContain('  Passed: 2 | Failed: 0 | Skipped: 1');
+    expect(block).toContain('  Passed: 1 | Failed: 0 | Skipped: 0');
     expect(block).not.toContain('Flaky');
     expect(block).not.toContain('Failed tests');
+  });
+
+  it('reports the same counts as buildRunReport for 3 tests x 10 rounds, one failing 2 rounds', () => {
+    const testStatus = [
+      { id: 't1', status: 'pass', runs: 10, passes: 10, skips: 0 },
+      { id: 't2', status: 'fail', runs: 10, passes: 8, skips: 0, error: 'boom' },
+      { id: 't3', status: 'pass', runs: 10, passes: 10, skips: 0 },
+    ];
+    const block = formatRunComplete({ testStatus, handlers, durationMs: 1000, repeat: 10 });
+    const report = buildRunReport({
+      shard: { index: 1, total: 1 },
+      startedAt: 1000,
+      endedAt: 2000,
+      allTestIds: ['t1', 't2', 't3'],
+      handlers,
+      tests: testStatus,
+      executed: 3,
+      notRun: 0,
+      stoppedEarly: false,
+      repeat: 10,
+    });
+    expect(report.summary).toMatchObject({ passed: 2, failed: 1, skipped: 0 });
+    expect(block).toContain('  Passed: 2 | Failed: 1 | Skipped: 0');
   });
 
   it('leaves a single run unchanged when repeat is absent', () => {

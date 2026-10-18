@@ -346,6 +346,20 @@ describe('parseRunArgs --repeat', () => {
     expect(result.testFilters).toEqual(['checkout']);
   });
 
+  it.each([
+    [['--repeat', '2', '--shard', '1/2'], /--repeat cannot be combined with --shard\./],
+    [['--repeat', '2', '--record'], /--repeat cannot be combined with --record\./],
+    [['--repeat', '2', '--update-snapshots'], /--repeat cannot be combined with --update-snapshots\./],
+    [['--repeat', '2', '--ci'], /--repeat cannot be combined with --ci\./],
+    [['--repeat', '2', '--shard', '1/2', '--ci'], /--repeat cannot be combined with --shard and --ci\./],
+  ])('refuses %j in the parser', (argv, message) => {
+    expect(() => parseRunArgs(argv)).toThrow(message);
+  });
+
+  it('allows --repeat 1 with those flags', () => {
+    expect(parseRunArgs(['--repeat', '1', '--ci']).repeat).toBe(1);
+  });
+
   it('suggests --repeat for a near miss', () => {
     expect(() => parseRunArgs(['--repeats', '2'])).toThrow(/Did you mean --repeat\?/);
   });
