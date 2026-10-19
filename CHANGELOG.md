@@ -1,3 +1,20 @@
+## <small>1.11.0 (2026-10-19)</small>
+
+* feat(run): `--cpu-throttle <rate>` slows the browser's CPU with Chrome's own throttling, so a race a fast laptop always wins gets a chance to lose the way it does on a slow CI runner. `"cpuThrottle"` in `twd.config.json` does the same for a job that should always run slowed, and the flag overrides it. The throttle is applied before navigation, so the app boots throttled too. A throttled run says so before it navigates and again as `CPU throttle: Nx` in the run-complete block; at the default of `1` the output is unchanged. See `docs/cpu-throttling.md` (#37)
+* feat(run): a rate below 1, from the flag or the config, is refused before the browser launches instead of being dropped. A dropped rate is a full-speed run you believe was throttled (#37)
+* feat(run): `--repeat <n>` runs the selected tests n times in one browser, reloading the page between rounds, and lists every test that both passed and failed under `Flaky` with its pass count and last error. A flaky test still fails the run. Retries are forced off for the run so a second attempt cannot hide a flake, and `maxFailures` counts distinct failing tests rather than failed rounds (#42)
+* feat(report): under `--repeat`, `run.json` adds `repeat` on the run header and `runs` and `passes` on each test, still on schema v3. `index.html` and `summary.md` list flaky tests under Needs attention (#42)
+* feat(contracts): the console contract block prints only errors and warnings. `MOCK ✓` lines and the `Skipped:` list are gone, skips are a count in the summary line, and a `Source:` header appears only for a spec with something to report. The full per-mock detail stays in `run.json` and `index.html` (#38)
+* fix(actions): the `run` action skips the contract PR comment on pull requests from forks, whose read-only `GITHUB_TOKEN` made the step fail with `Resource not accessible by integration` and turned a green job red (#39)
+* note: `--repeat` is refused together with `--record`, `--shard`, `--update-snapshots` or `--ci`, and with `record.enabled: true` in the config. Coverage, contract validation and layout snapshots are skipped while repeating
+
+Nothing here changes an existing run: both new flags are opt-in, and the only
+default output that changes is the shorter contract block. Anything that
+scraped `MOCK ✓` lines from the console should read `run.json` instead.
+
+The action's `cli-version` default moves to 1.11.0. Nothing here needs a newer
+`twd-js`.
+
 ## <small>1.10.0 (2026-09-28)</small>
 
 * feat(report): every `twd-cli run` writes a report folder, `.twd/report/`, not just a sharded run. It holds `run.json`, a self-contained `index.html` and a `summary.md`, plus `recordings/` and `snapshots/` when the run produced any. The run-complete block ends with `Report: .twd/report/index.html`. Until now a plain run left nothing machine-readable behind, so an agent or a CI step had to scrape the console (#36)
