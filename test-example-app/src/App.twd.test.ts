@@ -1,4 +1,4 @@
-import { twd, userEvent, screenDom } from "twd-js";
+import { twd, userEvent, screenDom, expect } from "twd-js";
 import { describe, it, beforeEach } from "twd-js/runner";
 
 describe("Test example app", () => {
@@ -32,6 +32,18 @@ describe("Test example app", () => {
 
       twd.should(viteLogo, "be.visible");
       twd.should(reactLogo, "be.visible");
+    });
+
+    // Viewports are declared in main.tsx. twd-cli runs the untagged tests and
+    // the desktop one at its configured size, then resizes once for mobile.
+    it("should render the heading at a desktop width", { viewport: "desktop" }, async () => {
+      expect(window.matchMedia("(min-width: 1024px)").matches).to.equal(true);
+      twd.should(screenDom.getByRole("heading", { level: 1 }), "be.visible");
+    });
+
+    it("should render the heading at a mobile width", { viewport: "mobile" }, async () => {
+      expect(window.matchMedia("(max-width: 767px)").matches).to.equal(true);
+      twd.should(screenDom.getByRole("heading", { level: 1 }), "be.visible");
     });
   });
 
