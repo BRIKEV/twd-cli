@@ -3,6 +3,13 @@ import { renderHtml } from '../src/reportHtml.js';
 import { report, contractResult, invalid } from './reportFixtures.js';
 
 describe('renderHtml', () => {
+  it('shows the viewport of a failed test as a chip', () => {
+    const html = renderHtml(report({
+      tests: [{ id: 't1', status: 'fail', error: 'boom', viewport: 'mobile' }],
+    }));
+    expect(html).toContain('<span class="chip">mobile</span>');
+  });
+
   it('is one self-contained document', () => {
     const html = renderHtml(report());
     expect(html.startsWith('<!doctype html>')).toBe(true);

@@ -135,6 +135,41 @@ npx twd-cli run --cpu-throttle 6 --test "checkout flow"
 See [docs/cpu-throttling.md](docs/cpu-throttling.md) for the config key, what a
 throttled run prints, and how to hunt a flake reliably.
 
+### Responsive tests (viewports)
+
+When your app declares named viewports in twd-js and tags tests with them
+(see [Responsive Testing](https://twd.dev/responsive-testing)), `twd-cli run`
+covers every viewport in one run, with no extra config:
+
+```
+Running 58 test(s) across 2 viewport(s)
+  desktop 1280x800: 56 test(s)
+  mobile 767x800: 2 test(s)
+```
+
+- The run starts at `viewport` (1280x800 by default) with the tests that match
+  that width, then resizes the page for each remaining viewport and runs its
+  tests. **Each test runs once**, and the page is never reloaded.
+- A viewport's size comes from its range in the app: `maxWidth`, otherwise
+  `minWidth`, with the height of `viewport`. Set exact sizes with
+  `viewportSizes`:
+
+  ```json
+  { "viewportSizes": { "mobile": { "width": 390, "height": 844 } } }
+  ```
+
+  A size outside the app's range stops the run with an error before that
+  viewport's tests start.
+- Failures name their viewport (`× Header > opens the menu [mobile]`), and
+  `run.json` records it on each test and the passes under `run.viewports`.
+- A test tagged with a viewport the app never declared is reported as skipped,
+  with a warning listing it. It does not fail the run.
+- Recording and `--repeat` run at one size. Recording reports the other
+  viewports' tests as skipped; `--repeat` leaves them out.
+
+Apps that declare no viewports, or use a twd-js without them, run exactly as
+before.
+
 ### Configuration
 
 Create a `twd.config.json` file in your project root:
@@ -174,6 +209,7 @@ Create a `twd.config.json` file in your project root:
 | `contracts` | array | none | OpenAPI contract validation specs (see [Contract Validation](#contract-validation)) |
 | `contractReportPath` | string | none | Path to write a markdown report for CI/PR integration |
 | `viewport` | object | `{ "width": 1280, "height": 800 }` | Browser viewport for every run. Layout snapshots are only reproducible when this is fixed and explicit. While recording, `record.viewport` wins |
+| `viewportSizes` | object | none | Exact sizes for the app's named viewports, e.g. `{ "mobile": { "width": 390, "height": 844 } }`. Without it each viewport runs at the edge of its range. See [Responsive tests](#responsive-tests-viewports) |
 | `snapshotDir` | string | `"__twd_snapshots__"` | Where layout snapshot references and failure captures live. Must match the `dir` given to the `twdSnapshot` Vite plugin. See [layout snapshots](docs/layout-snapshots.md) |
 | `record` | object | see below | Video recording settings (see [Recording](#recording)) |
 | `report` | object | `{ "dir": ".twd/report", "formats": ["html", "markdown"] }` | Run report folder and views; `false` disables it |

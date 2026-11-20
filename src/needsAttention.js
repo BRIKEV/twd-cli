@@ -35,6 +35,8 @@ export function needsAttention(report) {
       attempts: test.attempts ?? 1,
       recording: test.recording ?? null,
       snapshot,
+      // Only set when the app declares viewports and the test ran at one.
+      ...(typeof test.viewport === 'string' ? { viewport: test.viewport } : {}),
       ...(repeated ? { runs: test.runs, passes: test.passes ?? 0, flaky: isFlaky(test) } : {}),
     };
   });

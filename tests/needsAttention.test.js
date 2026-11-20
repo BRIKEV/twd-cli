@@ -3,6 +3,17 @@ import { needsAttention, contractWarnings } from '../src/needsAttention.js';
 import { report, contractResult, invalid } from './reportFixtures.js';
 
 describe('needsAttention', () => {
+  it('carries the viewport a failed test ran at, and nothing when it had none', () => {
+    const items = needsAttention(report({
+      tests: [
+        { id: 't1', status: 'fail', error: 'a', viewport: 'mobile' },
+        { id: 't2', status: 'fail', error: 'b' },
+      ],
+    }));
+    expect(items[0].viewport).toBe('mobile');
+    expect(items[1]).not.toHaveProperty('viewport');
+  });
+
   it('is empty on a green run', () => {
     expect(needsAttention(report())).toEqual([]);
   });

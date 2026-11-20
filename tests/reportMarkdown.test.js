@@ -3,6 +3,13 @@ import { renderMarkdown, MARKDOWN_MAX_CHARS } from '../src/reportMarkdown.js';
 import { report, contractResult, invalid } from './reportFixtures.js';
 
 describe('renderMarkdown', () => {
+  it('names the viewport next to a failed test that ran at one', () => {
+    const md = renderMarkdown(report({
+      tests: [{ id: 't1', status: 'fail', error: 'boom', viewport: 'mobile' }],
+    }));
+    expect(md).toContain('- ❌ **Invoices › shows empty state** _(mobile)_ _(3 attempts)_');
+  });
+
   it('renders a green run as heading and counts only', () => {
     const md = renderMarkdown(report());
     expect(md).toMatch(/^### ✅ TWD: 3 passed$/m);

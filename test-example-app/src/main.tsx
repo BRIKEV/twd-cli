@@ -8,6 +8,8 @@ if (import.meta.env.DEV) {
   // Use Vite's glob import to find all test files
   const testModules = import.meta.glob("./**/*.twd.test.ts");
   const { initTests, TWDSidebar } = await import('twd-js');
+  const { defineViewports } = await import('twd-js/runner');
+  defineViewports({ mobile: { maxWidth: 767 }, desktop: { minWidth: 1024 } });
   // You need to pass the test modules, the sidebar component, and createRoot function
   initTests(testModules, <TWDSidebar open={true} position="left" />, createRoot);
 }

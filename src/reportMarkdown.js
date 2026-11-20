@@ -58,7 +58,8 @@ function resultNote(entry) {
 
 function item(entry) {
   if (entry.kind === 'test') {
-    const lines = [`- ❌ **${escapeMd(pretty(entry.path))}**${resultNote(entry)}`];
+    const viewport = entry.viewport ? ` _(${escapeMd(entry.viewport)})_` : '';
+    const lines = [`- ❌ **${escapeMd(pretty(entry.path))}**${viewport}${resultNote(entry)}`];
     if (entry.error) lines.push(`  > ${code(firstLine(entry.error))}`);
     if (entry.snapshot) lines.push(`  > Layout snapshot ${code(entry.snapshot.name)} differs, diff in the report`);
     return lines;

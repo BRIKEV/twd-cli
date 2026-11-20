@@ -51,6 +51,7 @@ export function formatRunComplete({
   reportPath = null,
   cpuThrottle = 1,
   repeat = null,
+  viewports = null,
 }) {
   const { passed, failed, skipped } = outcomeCounts(testStatus);
   const duration = (durationMs / 1000).toFixed(1);
@@ -77,6 +78,11 @@ export function formatRunComplete({
   // block stays exactly what it has always been.
   if (cpuThrottle > 1) lines.push(`  CPU throttle: ${cpuThrottle}x`);
   if (repeat > 1) lines.push(`  Repeat: ${repeat}x`);
+  // Only when the app declares viewports, so other blocks stay as they were.
+  if (viewports && viewports.length > 0) {
+    const cells = viewports.map((v) => `${v.name ?? 'no viewport'} ${v.width}x${v.height} (${v.tests})`);
+    lines.push(`  Viewports: ${cells.join(' | ')}`);
+  }
 
   const repeating = repeat > 1;
   const flaky = repeating ? testStatus.filter((t) => isFlaky(t)) : [];
@@ -84,7 +90,8 @@ export function formatRunComplete({
   if (failures.length > 0) {
     lines.push('', `  Failed tests (${failures.length}):`);
     for (const failure of failures) {
-      const suffix = repeating ? ` (${failure.passes ?? 0}/${failure.runs} passed)` : '';
+      const where = typeof failure.viewport === 'string' ? ` [${failure.viewport}]` : '';
+      const suffix = `${where}${repeating ? ` (${failure.passes ?? 0}/${failure.runs} passed)` : ''}`;
       // The marker line, then diagnostics, then the error. A twd-js failure
       // message can carry a full accessible-roles dump, which would bury the
       // block if the error came first.

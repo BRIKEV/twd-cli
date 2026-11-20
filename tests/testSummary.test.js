@@ -10,6 +10,23 @@ const handlers = [
 ];
 
 describe('formatRunComplete', () => {
+  it('adds a line per viewport and names the viewport of each failure', () => {
+    const block = formatRunComplete({
+      testStatus: [
+        { id: 't1', status: 'fail', error: 'boom', viewport: 'mobile' },
+        { id: 't2', status: 'pass', viewport: 'desktop' },
+      ],
+      handlers,
+      durationMs: 1000,
+      viewports: [
+        { name: 'desktop', width: 1280, height: 800, tests: 1 },
+        { name: 'mobile', width: 767, height: 800, tests: 1 },
+      ],
+    });
+    expect(block).toContain('  Viewports: desktop 1280x800 (1) | mobile 767x800 (1)');
+    expect(block).toContain('    × Login > shows error on wrong password [mobile]');
+  });
+
   it('formats an all-pass run as the three-line block', () => {
     const block = formatRunComplete({
       testStatus: [
