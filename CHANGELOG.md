@@ -1,3 +1,18 @@
+## <small>1.12.0 (2026-11-20)</small>
+
+* feat(run): an app that declares viewports in twd-js runs every one of them in a single `twd-cli run`. The tests in scope at the configured size run first, then the page is resized once per remaining viewport and that viewport's tests run. Each test runs exactly once and there is no reload, so test ids, `merge`, shards and the summary keep working as before (#46, BRIKEV/twd#444)
+* feat(run): each viewport runs at the edge of its range (`{ maxWidth: 767 }` runs at 767). `"viewportSizes"` in `twd.config.json` sets an exact size per viewport, for example `{ "mobile": { "width": 390, "height": 844 } }`. If a size falls outside the app's range, the run stops with an error naming the viewport, the size and the range, instead of silently running nothing (#46)
+* feat(run): the run prints its plan before starting (`Running 73 test(s) across 2 viewport(s)`, then one line per viewport) and a `Viewports:` line in the run-complete block. Failed tests show their viewport in the console, `summary.md` and `index.html` (#46)
+* feat(report): `run.json` adds `viewports` on the run header and `viewport` on each test row, still on schema v3 (#46)
+* fix(run): until now, tests tagged for a viewport that did not match the 1280x800 page disappeared from the run without a word: they were counted as executed but were in no count and no report row. A test tagged with a name the app never declared (a typo such as `deskop`) is now reported as skipped with `skipReason: "viewport"` and a warning, without changing the exit code (#46)
+* note: recording runs only the viewport that matches its own size and reports the other tests as skipped; `--repeat` leaves the other viewports out of the run
+
+Nothing changes for an app without viewports, or on a twd-js older than 1.14.0:
+the output, the report and the exit code are the same as in 1.11.0. Running
+every viewport needs twd-js 1.14.0 or newer.
+
+The action's `cli-version` default moves to 1.12.0.
+
 ## <small>1.11.0 (2026-10-19)</small>
 
 * feat(run): `--cpu-throttle <rate>` slows the browser's CPU with Chrome's own throttling, so a race a fast laptop always wins gets a chance to lose the way it does on a slow CI runner. `"cpuThrottle"` in `twd.config.json` does the same for a job that should always run slowed, and the flag overrides it. The throttle is applied before navigation, so the app boots throttled too. A throttled run says so before it navigates and again as `CPU throttle: Nx` in the run-complete block; at the default of `1` the output is unchanged. See `docs/cpu-throttling.md` (#37)
