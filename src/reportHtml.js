@@ -61,6 +61,7 @@ function image(file, images) {
 function item(entry, images) {
   if (entry.kind === 'test') {
     const chips = [];
+    if (entry.viewport) chips.push(`<span class="chip">${esc(entry.viewport)}</span>`);
     if (typeof entry.runs === 'number') {
       const count = `${entry.passes}/${entry.runs} passed`;
       chips.push(`<span class="chip">${esc(entry.flaky ? `flaky · ${count}` : count)}</span>`);

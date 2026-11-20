@@ -16,6 +16,7 @@ import { resolvePerTestRecording } from './perTestRecording.js';
 import { selectShardIds } from './shard.js';
 import { parseCpuThrottle } from './cpuThrottle.js';
 import { recordRound, failedTestCount, tallyToStatus } from './repeat.js';
+import { planViewportPasses } from './viewportPlan.js';
 import { buildRunReport } from './runReport.js';
 import {
   cleanReportDir, copySnapshotCaptures, writeReportFolder,
@@ -61,16 +62,61 @@ function recordedFileSize(absPath) {
 // Passed to page.evaluate, so it runs in the page: `window` is the app, not Node.
 // Reloading between --repeat rounds mints new test ids, and both loads have to
 // read the registry the same way.
+//
+// Also reads the app's viewports, in the same call so the number of page
+// round-trips does not change. `viewports` is null unless the app declares
+// some AND twd-js exposes TestRunner#viewportScope: which test belongs to which
+// viewport is always twd-js's answer, never recomputed here. The names of the
+// functions matter: tests dispatch on them.
 function readRegisteredHandlers() {
   const state = window.__TWD_STATE__;
-  if (!state || !state.handlers) return [];
-  return Array.from(state.handlers.values()).map((h) => ({
-    id: h.id,
-    name: h.name,
-    parent: h.parent,
-    type: h.type,
-  }));
+  const handlers = !state || !state.handlers
+    ? []
+    : Array.from(state.handlers.values()).map((h) => ({
+      id: h.id,
+      name: h.name,
+      parent: h.parent,
+      type: h.type,
+    }));
+  const registry = window.__TWD_VIEWPORTS__;
+  const TestRunner = window.__testRunner;
+  const names = registry && registry.viewports ? Object.keys(registry.viewports) : [];
+  let viewports = null;
+  if (
+    names.length > 0
+    && typeof TestRunner === 'function'
+    && typeof TestRunner.prototype.viewportScope === 'function'
+  ) {
+    const runner = new TestRunner({});
+    const current = runner.viewportScope();
+    const named = {};
+    for (const name of names) named[name] = Array.from(runner.viewportScope({ viewport: name }) || []);
+    viewports = { definitions: registry.viewports, current: current ? Array.from(current) : [], named };
+  }
+  return { handlers, viewports };
 }
+
+// After a resize: the ids twd-js would run at the new width.
+function readCurrentScope() {
+  const scope = new window.__testRunner({}).viewportScope();
+  return scope ? Array.from(scope) : [];
+}
+
+// A twd-js page always answers with the object above. A bare array is the shape
+// this function returned before viewports, kept readable so nothing that
+// produced it breaks.
+function toRegistry(result) {
+  if (Array.isArray(result)) return { handlers: result, viewports: null };
+  return { handlers: result?.handlers ?? [], viewports: result?.viewports ?? null };
+}
+
+const describeRange = ({ minWidth, maxWidth }) => {
+  if (minWidth !== undefined && maxWidth !== undefined) return `${minWidth}-${maxWidth}px`;
+  if (minWidth !== undefined) return `min ${minWidth}px`;
+  return `max ${maxWidth}px`;
+};
+
+const sizeLabel = ({ width, height }) => `${width}x${height}`;
 
 export async function runTests(options = {}) {
   const {
@@ -106,6 +152,7 @@ export async function runTests(options = {}) {
   let executed = 0;
   let stoppedEarly = false;
   let throttleRate = 1;
+  let viewportSummary = null;
   const recordingInfos = [];
 
   // Stops the screencast at most once. Must always run before browser.close():
@@ -160,6 +207,7 @@ export async function runTests(options = {}) {
         stoppedEarly,
         retryCount: repeating ? 1 : config.retryCount,
         repeat: repeating ? repeatCount : null,
+        viewports: viewportSummary,
         version: cliVersion(),
         url: config.url,
         snapshots,
@@ -348,8 +396,12 @@ export async function runTests(options = {}) {
     }
 
     // Enumerate registered handlers (for the count line and --test filtering)
-    const registeredHandlers = await page.evaluate(readRegisteredHandlers);
+    const registry = toRegistry(await page.evaluate(readRegisteredHandlers));
+    const registeredHandlers = registry.handlers;
     partialHandlers = registeredHandlers;
+    // One pass per viewport, unless --repeat or recording pins the run to a
+    // single size (they still use the plan, to say what they leave out).
+    const planned = Boolean(registry.viewports) && !repeating && !recording;
 
     // The full discovered order, before any filtering. Computed here, ahead of
     // the filter branch below, so a "no tests matched" report emitted from
@@ -397,7 +449,8 @@ export async function runTests(options = {}) {
       console.log(`Filtering: running ${ids.length} test(s) matching --test filter(s).`);
     } else {
       const testCount = registeredHandlers.filter((h) => h.type === 'test').length;
-      console.log(`Running ${testCount} test(s)...`);
+      // With viewports the plan below says it, split by size.
+      if (!planned) console.log(`Running ${testCount} test(s)...`);
     }
 
     // Resolve the ordered id list to run: the filter result, or all tests.
@@ -409,7 +462,7 @@ export async function runTests(options = {}) {
     // slice it took. filteredIds is the list the shards divide, so it is what
     // executed + notRun must total.
     filteredIds = selectedIds ?? allTestIds;
-    const baseIds = sharded
+    let baseIds = sharded
       ? selectShardIds(filteredIds, shard.index, shard.total)
       : filteredIds;
 
@@ -417,6 +470,65 @@ export async function runTests(options = {}) {
       console.log(
         `Shard ${shard.index}/${shard.total}: running ${baseIds.length} of ${filteredIds.length} test(s).`
       );
+    }
+
+    // Each test runs once, in the first pass that takes it: the tests in scope
+    // at the size the page is at now, then one pass per remaining viewport. No
+    // reload in between, so ids stay valid and run.json keeps one row per test.
+    const currentSize = recording ? record.viewport : config.viewport;
+    let passes = [{ name: undefined, size: null, ids: baseIds }];
+    const viewportSkipped = [];
+    if (registry.viewports) {
+      const plan = planViewportPasses({
+        selectedIds: baseIds,
+        currentScope: registry.viewports.current,
+        namedScopes: registry.viewports.named,
+        viewports: registry.viewports.definitions,
+        base: currentSize,
+        overrides: config.viewportSizes ?? {},
+      });
+      const first = plan.passes.filter((p) => p.size === null);
+      const later = plan.passes.filter((p) => p.size !== null);
+      const laterCount = later.reduce((n, p) => n + p.ids.length, 0);
+      const laterNames = later.map((p) => p.name).join(', ');
+
+      if (plan.unmatched.length > 0) {
+        const paths = plan.unmatched.map((id) => buildTestPath(id, registeredHandlers) ?? id);
+        console.warn(
+          `Warning: ${plan.unmatched.length} test(s) match no declared viewport, so they never run. Check the viewport names:\n  ${paths.join('\n  ')}`
+        );
+      }
+
+      if (repeating) {
+        // --repeat reloads every round and joins rounds by position, so the
+        // other viewports are left out rather than reported.
+        if (laterCount > 0) {
+          console.log(`--repeat runs at one size: ${laterCount} test(s) for ${laterNames} are left out.`);
+        }
+        baseIds = first.flatMap((p) => p.ids);
+        filteredIds = baseIds;
+      } else {
+        if (recording && laterCount > 0) {
+          console.log(`Recording runs at one size: ${laterCount} test(s) for ${laterNames} are skipped.`);
+        }
+        passes = recording ? first : plan.passes;
+        const skippedIds = recording ? [...plan.unmatched, ...later.flatMap((p) => p.ids)] : plan.unmatched;
+        for (const id of baseIds) {
+          if (skippedIds.includes(id)) viewportSkipped.push({ id, status: 'skip', skipReason: 'viewport' });
+        }
+        viewportSummary = passes.map((p) => ({
+          name: p.name,
+          ...(({ width, height }) => ({ width, height }))(p.size ?? currentSize),
+          tests: p.ids.length,
+        }));
+        if (planned) {
+          const total = passes.reduce((n, p) => n + p.ids.length, 0);
+          console.log(`Running ${total} test(s) across ${passes.length} viewport(s)`);
+          for (const p of passes) {
+            console.log(`  ${p.name ?? 'no viewport'} ${sizeLabel(p.size ?? currentSize)}: ${p.ids.length} test(s)`);
+          }
+        }
+      }
     }
 
     const { perTest, reason: perTestReason } = resolvePerTestRecording({
@@ -428,7 +540,10 @@ export async function runTests(options = {}) {
     if (perTestReason) console.log(perTestReason);
 
     // A chunk is one runByIds call, so a clip per test needs one test per chunk.
-    const chunks = chunk(baseIds, perTest ? 1 : config.chunkSize);
+    // Chunks never straddle two passes: a pass may need a resize first.
+    const chunks = passes.flatMap((pass) =>
+      chunk(pass.ids, perTest ? 1 : config.chunkSize).map((ids) => ({ ids, pass }))
+    );
 
     const startClip = async (testNames) => {
       const filename = resolveRecordFilename({
@@ -584,7 +699,8 @@ export async function runTests(options = {}) {
           console.log(`Repeat ${round}/${repeatCount}: reloading ${config.url} ...`);
           await page.goto(config.url);
           await page.waitForSelector('#twd-sidebar-root', { timeout: config.timeout });
-          handlersNow = await page.evaluate(readRegisteredHandlers);
+          const registryNow = toRegistry(await page.evaluate(readRegisteredHandlers));
+          handlersNow = registryNow.handlers;
           partialHandlers = handlersNow;
           const activeFilters = changedTitles ? [...testFilters, ...changedTitles] : testFilters;
           orderedNow = orderedTestIds(handlersNow);
@@ -599,6 +715,12 @@ export async function runTests(options = {}) {
           } else {
             selection = orderedNow;
             filteredIds = orderedNow;
+          }
+          // Same rule as round 1: only what runs at this size.
+          if (registryNow.viewports) {
+            const inScope = new Set(registryNow.viewports.current);
+            selection = selection.filter((id) => inScope.has(id));
+            filteredIds = selection;
           }
         }
 
@@ -617,8 +739,30 @@ export async function runTests(options = {}) {
       }
     } else {
       const seenIds = new Set();
+      // Tests no pass takes are settled before anything runs, so a crash
+      // mid-run still reports them for what they are.
+      partialStatus.push(...viewportSkipped);
+      executed += viewportSkipped.length;
+      let activePass = null;
 
-      for (const ids of chunks) {
+      for (const { ids, pass } of chunks) {
+        if (pass !== activePass) {
+          activePass = pass;
+          if (pass.size) {
+            await page.setViewport(pass.size);
+            // twd-js decides what matches. A size outside the app's range would
+            // otherwise run nothing and look like an empty pass.
+            const inScope = new Set(await page.evaluate(readCurrentScope));
+            if (!pass.ids.every((id) => inScope.has(id))) {
+              const range = describeRange(registry.viewports.definitions[pass.name]);
+              throw new Error(
+                `Viewport "${pass.name}" at ${sizeLabel(pass.size)} does not match the app's definition (${range}). ` +
+                `Set viewportSizes.${pass.name} in twd.config.json to a size inside that range.`
+              );
+            }
+          }
+        }
+
         let chunkClip = null;
         if (perTest && !recordingFailed) {
           const testNames = ids.map((id) => buildTestPath(id, registeredHandlers)).filter(Boolean);
@@ -636,7 +780,7 @@ export async function runTests(options = {}) {
         for (const entry of chunkStatus) {
           if (seenIds.has(entry.id)) continue;
           seenIds.add(entry.id);
-          partialStatus.push(entry);
+          partialStatus.push(pass.name === undefined ? entry : { ...entry, viewport: pass.name });
         }
         executed += ids.length;
 
@@ -813,6 +957,7 @@ export async function runTests(options = {}) {
       reportPath,
       cpuThrottle: throttleRate,
       repeat: repeating ? repeatCount : null,
+      viewports: viewportSummary,
     }));
 
     return hasFailures;

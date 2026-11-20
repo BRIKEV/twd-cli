@@ -1,7 +1,7 @@
 # Responsive runs: one pass per viewport - Design
 
 Date: 2026-11-20
-Status: Proposal, refined with the maintainer. Implementation not started.
+Status: Implemented.
 Scope: `twd-cli`. Needs twd-js with viewports and a public
 `TestRunner#viewportScope` (BRIKEV/twd#445, BRIKEV/twd#446).
 Issue: BRIKEV/twd#444
@@ -20,10 +20,10 @@ In the browser, Run All only runs the tests matching the window width. twd-cli
 runs every suite at one fixed size (`config.viewport`, 1280x800), so:
 
 - The mobile tests never run in CI.
-- Worse, they disappear badly. twd-cli sends ids in chunks to `runByIds`,
-  twd-js drops the ids that do not match the width, and twd-cli counts them as
-  **not run**, printing "Fix the failures above, or set maxFailures: 0". The
-  run does not fail, but the message is wrong.
+- Worse, they disappear without a word. twd-cli sends ids in chunks to
+  `runByIds` and counts every id it sent as executed; twd-js drops the ids
+  that do not match the width, so those tests are in no count and no report
+  row. The run stays green and nothing says that tests were left out.
 
 ## 2. Principles
 
@@ -46,7 +46,9 @@ have produced the ordered id list, as today:
 
 1. **Detect.** In the page: `window.__TWD_VIEWPORTS__` has at least one name,
    and `new window.__testRunner(events).viewportScope` is a function. If not,
-   stop here and run as today.
+   stop here and run as today. This happens inside the existing handler
+   enumeration call, which now returns `{ handlers, viewports }`, so the
+   number of page round-trips does not change.
 2. **Plan.** Still in the page, without resizing:
    - Pass 1, at `config.viewport`: the selected ids in `viewportScope()`. This
      picks up untagged tests (unless the app sets `defaultViewport`) and the
@@ -128,8 +130,11 @@ about unknown names in the browser.
   `record.viewport`: the video has one fixed size. Tests for other viewports
   are reported as skipped with `skipReason: "viewport"` and the console says
   why. Per-viewport videos can come later.
-- **`--repeat`** does the same: pass 1 only. It reloads between rounds, which
-  this design avoids, and it is niche.
+- **`--repeat`** runs pass 1 only and **leaves the other viewports out** of
+  the run, with a console line, instead of reporting them as skipped rows. It
+  reloads between rounds (which this design otherwise avoids) and joins rounds
+  by position; adding rows for tests that never run would complicate that for
+  a niche flag.
 - **Layout snapshots** need no change. Each test runs once at one size, so its
   reference is always taken at that size. Changing a `viewportSizes` override
   changes the size, and twd-js already fails the snapshot in CI with a
@@ -144,7 +149,7 @@ about unknown names in the browser.
 | App without viewports | As today |
 | twd-js older than viewports | As today (no registry, no `viewportScope`) |
 | App with viewports, new twd-cli | Passes per viewport |
-| App with viewports, current twd-cli (1.11) | Pass 1 only; other tests counted as "not run" (the bug in section 1). Upgrading twd-cli fixes it |
+| App with viewports, current twd-cli (1.11) | Pass 1 only; other tests silently missing (the bug in section 1). Upgrading twd-cli fixes it |
 
 ## 9. Testing plan
 
@@ -165,10 +170,15 @@ page:
   test per viewport, check both run and the report shows them. Needs the twd-js
   release with viewports, or a local link until then.
 
-## 10. Open questions
+## 10. Decisions
 
-1. **`viewportSizes` name.** Alternatives: `viewports` (closer to the app
-   side, but one letter from `viewport`), or nesting under `viewport`
-   (`viewport.sizes`).
-2. **Unknown names and the exit code.** Proposed: warning only, like twd-js.
-   A CI that wants it strict could fail on it later behind a flag.
+1. **`viewportSizes`** is the key name, kept apart from `viewport` by more than
+   one letter.
+2. **Unknown names only warn**, like twd-js. A CI that wants it strict could
+   fail on it later behind a flag.
+
+Verified end to end in `test-example-app` against a local twd-js build:
+desktop at 1280x800 and mobile at 390x844 (from `viewportSizes`) in one run,
+an undeclared `deskop` tag reported as skipped with the warning, a
+`viewportSizes` outside the range stopping the run with exit 1, and the same
+app without viewports printing exactly what it printed before.

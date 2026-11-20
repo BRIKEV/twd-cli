@@ -48,6 +48,15 @@ The numeric guards on the two recording flags differ **on purpose**, so do not h
 
 `record` (`DEFAULT_RECORD`) is the only **nested** config key, so the merge goes two levels deep: `record` merges over `DEFAULT_RECORD`, and `record.viewport` merges over the default viewport. A flat spread would wipe sibling defaults. Recording is off by default and never runs unless explicitly requested.
 
+**`src/viewportPlan.js`**: responsive runs. `planViewportPasses()` turns what the page reports (`TestRunner#viewportScope()` from twd-js, read inside `readRegisteredHandlers` so the page round-trips do not change) into ordered passes: the tests in scope at the current size, then one pass per remaining declared viewport at `sizeForViewport()` (base width if in range, else `maxWidth`, else `minWidth`, with `viewportSizes` merged over it). **Each test runs once**, so `run.json` keeps one row per test and `merge`/shards are untouched. Which test belongs to which viewport is always twd-js's answer; never reimplement the matching rules here. Load-bearing details:
+
+- **No reload between passes.** A reload mints new test ids. `page.setViewport()` is enough, because `matchMedia` follows it.
+- **After each resize, `readCurrentScope` must contain the whole pass**, or the run throws naming the viewport, the size and the app's range. Without it a bad `viewportSizes` would make `runByIds` silently run nothing.
+- **`readRegisteredHandlers` returns `{ handlers, viewports }`, and `toRegistry()` also accepts a bare array**, the shape before viewports. Many tests mock that call with an array; keep both readable.
+- **Tests for undeclared names are `status: "skip"`, `skipReason: "viewport"`, pushed before the first chunk and counted in `executed`**, so `executed + notRun = selected` still holds.
+- **Recording runs only the first pass** (the video has one size) and reports the rest as skipped; **`--repeat` leaves them out** and narrows `baseIds`/`filteredIds`, because it reloads and joins rounds by position.
+- Chunks never straddle two passes. With no viewports the plan is a single pass of `baseIds` and nothing in the output changes.
+
 **`src/version.js`**: `cliVersion()` reads the installed package's version from its own `package.json`, for `run.json`'s `run.twdCliVersion`. Returns `null` under a mocked `fs` or a broken install; the report treats that as unknown rather than crashing.
 
 **`src/needsAttention.js`**: `needsAttention(report)` is the one ordered list of what broke: failed tests (each paired with its snapshot capture when the error names one), remaining snapshot failures, and contract results in `mode: "error"`. Both renderers below read it, so the HTML and markdown views can never disagree about what needs attention. `contractWarnings(report)` is the equivalent list for non-fatal contract issues (warn-mode failures and any mode's warnings).

@@ -2939,3 +2939,209 @@ describe('runTests --repeat', () => {
     expect(logs.some((l) => l.includes('Skipping contract validation (--repeat)'))).toBe(true);
   });
 });
+
+describe('runTests across viewports', () => {
+  const VIEWPORTS = { mobile: { maxWidth: 767 }, desktop: { minWidth: 1024 } };
+
+  // A page that behaves like twd-js with viewports: the handler listing comes
+  // back with each test's scope, and a chunk only runs the ids that match the
+  // current width, silently dropping the rest, as runByIds does.
+  function viewportPage({ handlers, tags, viewports = VIEWPORTS, fail = [] }) {
+    const page = createMockPage();
+    let width = defaultMockConfig.viewport.width;
+    page.setViewport = vi.fn(async (size) => {
+      width = size.width;
+    });
+    const matches = (name, w) => {
+      const { minWidth, maxWidth } = viewports[name];
+      return (minWidth === undefined || w >= minWidth) && (maxWidth === undefined || w <= maxWidth);
+    };
+    const testIds = handlers.filter((h) => h.type === 'test').map((h) => h.id);
+    // Untagged tests are in every scope; tags naming no declared viewport in none.
+    const inViewport = (id, name) => !tags[id] || tags[id].includes(name);
+    const scopeAt = (w) =>
+      testIds.filter((id) => !tags[id] || tags[id].some((n) => viewports[n] && matches(n, w)));
+    page.evaluate = vi.fn(async (fn, retryCount, ids) => {
+      if (fn.name === 'readRegisteredHandlers') {
+        const named = {};
+        for (const name of Object.keys(viewports)) named[name] = testIds.filter((id) => inViewport(id, name));
+        return { handlers, viewports: { definitions: viewports, current: scopeAt(width), named } };
+      }
+      if (fn.name === 'readCurrentScope') return scopeAt(width);
+      if (Array.isArray(ids)) {
+        const scope = new Set(scopeAt(width));
+        return ids
+          .filter((id) => scope.has(id))
+          .map((id) => (fail.includes(id) ? { id, status: 'fail', error: 'boom' } : { id, status: 'pass' }));
+      }
+      return undefined;
+    });
+    return page;
+  }
+
+  const handlers = [
+    { id: 's', name: 'Header', type: 'suite' },
+    { id: 'plain', name: 'plain', parent: 's', type: 'test' },
+    { id: 'nav', name: 'nav', parent: 's', type: 'test' },
+    { id: 'burger', name: 'burger', parent: 's', type: 'test' },
+  ];
+  const tags = { nav: ['desktop'], burger: ['mobile'] };
+
+  const runJson = () => {
+    const call = vi.mocked(fs.writeFileSync).mock.calls.find(([file]) => String(file).endsWith('run.json'));
+    return call ? JSON.parse(call[1]) : null;
+  };
+  const chunkCalls = (page) => page.evaluate.mock.calls.filter(([, , ids]) => Array.isArray(ids)).map(([, , ids]) => ids);
+
+  let logSpy;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const logs = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+
+  it('runs each test once: the configured size first, then each other viewport', async () => {
+    const page = viewportPage({ handlers, tags });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    const failed = await runTests();
+
+    expect(failed).toBe(false);
+    expect(chunkCalls(page)).toEqual([['plain', 'nav'], ['burger']]);
+    expect(page.setViewport).toHaveBeenLastCalledWith({ width: 767, height: 800 });
+    expect(logs()).toContain('Running 3 test(s) across 2 viewport(s)');
+    expect(logs()).toContain('desktop 1280x800: 2 test(s)');
+    expect(logs()).toContain('mobile 767x800: 1 test(s)');
+    expect(logs()).toContain('Passed: 3 | Failed: 0 | Skipped: 0');
+
+    const report = runJson();
+    expect(report.tests.map((t) => [t.id, t.viewport])).toEqual([
+      ['plain', 'desktop'],
+      ['nav', 'desktop'],
+      ['burger', 'mobile'],
+    ]);
+    expect(report.run.viewports).toEqual([
+      { name: 'desktop', width: 1280, height: 800, tests: 2 },
+      { name: 'mobile', width: 767, height: 800, tests: 1 },
+    ]);
+    expect(report.shards[0].notRun).toBe(0);
+  });
+
+  it('uses viewportSizes from twd.config.json for the other passes', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      viewportSizes: { mobile: { width: 390, height: 844 } },
+    });
+    const page = viewportPage({ handlers, tags });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).toHaveBeenLastCalledWith({ width: 390, height: 844 });
+    expect(logs()).toContain('mobile 390x844: 1 test(s)');
+  });
+
+  it('stops before a pass whose size the app does not see as that viewport', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      viewportSizes: { mobile: { width: 1000 } },
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const page = viewportPage({ handlers, tags });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await expect(runTests()).rejects.toThrow('does not match the app');
+
+    expect(chunkCalls(page)).toEqual([['plain', 'nav']]);
+    expect(runJson().error.message).toContain(
+      'Viewport "mobile" at 1000x800 does not match the app\'s definition (max 767px)'
+    );
+  });
+
+  it('reports tests for undeclared viewports as skipped, with a warning, without failing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const page = viewportPage({
+      handlers: [...handlers, { id: 'typo', name: 'typo', parent: 's', type: 'test' }],
+      tags: { ...tags, typo: ['deskop'] },
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    const failed = await runTests();
+
+    expect(failed).toBe(false);
+    const warnings = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(warnings).toContain('1 test(s) match no declared viewport');
+    expect(warnings).toContain('Header > typo');
+    expect(runJson().tests.find((t) => t.id === 'typo')).toMatchObject({ status: 'skip', skipReason: 'viewport' });
+    expect(logs()).toContain('Passed: 3 | Failed: 0 | Skipped: 1');
+    expect(runJson().shards[0].notRun).toBe(0);
+  });
+
+  it('records only the first pass and reports the other viewports as skipped', async () => {
+    vi.mocked(loadConfig).mockReturnValue({
+      ...defaultMockConfig,
+      record: {
+        enabled: true, dir: './twd-artifacts', filename: null, maxClips: 20, format: 'mp4',
+        viewport: { width: 1280, height: 720, deviceScaleFactor: 1 }, fps: 30, speed: 1,
+        hideSidebar: true, ffmpegPath: 'ffmpeg',
+      },
+    });
+    const page = viewportPage({ handlers, tags });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    // A recording of a few tests makes one clip per test, so one chunk each.
+    expect(chunkCalls(page).flat()).toEqual(['plain', 'nav']);
+    expect(page.setViewport).toHaveBeenCalledTimes(1);
+    expect(logs()).toContain('Recording runs at one size: 1 test(s) for mobile are skipped.');
+    expect(runJson().tests.find((t) => t.id === 'burger')).toMatchObject({ status: 'skip', skipReason: 'viewport' });
+  });
+
+  it('leaves the other viewports out of a --repeat run, and says so', async () => {
+    const page = viewportPage({ handlers, tags });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests({ repeat: 2 });
+
+    expect(chunkCalls(page).every((ids) => !ids.includes('burger'))).toBe(true);
+    expect(logs()).toContain('--repeat runs at one size: 1 test(s) for mobile are left out.');
+    const report = runJson();
+    expect(report.tests.map((t) => t.id).sort()).toEqual(['nav', 'plain']);
+    expect(report.shards[0].notRun).toBe(0);
+  });
+
+  it('counts maxFailures across passes', async () => {
+    vi.mocked(loadConfig).mockReturnValue({ ...defaultMockConfig, maxFailures: 1, chunkSize: 1 });
+    const page = viewportPage({ handlers, tags, fail: ['plain'] });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    const failed = await runTests();
+
+    expect(failed).toBe(true);
+    expect(chunkCalls(page)).toEqual([['plain']]);
+    expect(page.setViewport).toHaveBeenCalledTimes(1);
+    expect(runJson().shards[0].notRun).toBe(2);
+  });
+
+  it('runs exactly as before when the page reports no viewports', async () => {
+    const page = createMockPage({
+      handlers: [{ id: '1', name: 'a', type: 'test' }],
+      testStatus: [{ id: '1', status: 'pass' }],
+    });
+    vi.mocked(puppeteer.launch).mockResolvedValue(createMockBrowser(page));
+
+    await runTests();
+
+    expect(page.setViewport).toHaveBeenCalledTimes(1);
+    expect(logs()).toContain('Running 1 test(s)...');
+    expect(logs()).not.toContain('viewport(s)');
+    const report = runJson();
+    expect(report.run.viewports).toBeUndefined();
+    expect(report.tests[0].viewport).toBeUndefined();
+  });
+});

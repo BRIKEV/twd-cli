@@ -70,6 +70,7 @@ export function buildRunReport({
   recordingFailed = false,
   coverage = null,
   repeat = null,
+  viewports = null,
 }) {
   // Resolved here, in the shard that ran the tests, because this is the only
   // place the handler map is valid: ids are per-page-load random, so shard 2's
@@ -81,7 +82,13 @@ export function buildRunReport({
 
   return finalizeReport({
     schemaVersion: REPORT_SCHEMA_VERSION,
-    run: { twdCliVersion: version, url, ...(repeat > 1 ? { repeat } : {}) },
+    run: {
+      twdCliVersion: version,
+      url,
+      ...(repeat > 1 ? { repeat } : {}),
+      // One entry per pass, only when the app declares viewports.
+      ...(viewports ? { viewports } : {}),
+    },
     error,
     snapshots,
     coverage,
