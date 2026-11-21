@@ -1,4 +1,4 @@
-## <small>1.12.0 (2026-11-20)</small>
+## <small>1.12.0 (2026-11-21)</small>
 
 * feat(run): an app that declares viewports in twd-js runs every one of them in a single `twd-cli run`. The tests in scope at the configured size run first, then the page is resized once per remaining viewport and that viewport's tests run. Each test runs exactly once and there is no reload, so test ids, `merge`, shards and the summary keep working as before (#46, BRIKEV/twd#444)
 * feat(run): each viewport runs at the edge of its range (`{ maxWidth: 767 }` runs at 767). `"viewportSizes"` in `twd.config.json` sets an exact size per viewport, for example `{ "mobile": { "width": 390, "height": 844 } }`. If a size falls outside the app's range, the run stops with an error naming the viewport, the size and the range, instead of silently running nothing (#46)
